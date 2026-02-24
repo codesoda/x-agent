@@ -40,10 +40,10 @@ Local installs use symlinks so edits to the repo are immediately reflected.
 
 ```sh
 # Rust project
-~/projects/x-agent/scripts/cargo-agent.sh
+path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
 
 # Node.js project
-~/projects/x-agent/scripts/npm-agent.sh
+path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
 ```
 
 ## Usage

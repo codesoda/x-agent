@@ -7,11 +7,11 @@ description: |
   Triggers on: cargo agent, run cargo checks, rust checks, cargo fmt clippy test, verify rust code.
 context: fork
 allowed-tools:
-  - Bash(~/projects/x-agent/scripts/cargo-agent.sh*)
-  - Bash(RUN_*=* ~/projects/x-agent/scripts/cargo-agent.sh*)
-  - Bash(MAX_LINES=* ~/projects/x-agent/scripts/cargo-agent.sh*)
-  - Bash(USE_NEXTEST=* ~/projects/x-agent/scripts/cargo-agent.sh*)
-  - Bash(KEEP_DIR=* ~/projects/x-agent/scripts/cargo-agent.sh*)
+  - Bash(scripts/cargo-agent.sh*)
+  - Bash(RUN_*=* scripts/cargo-agent.sh*)
+  - Bash(MAX_LINES=* scripts/cargo-agent.sh*)
+  - Bash(USE_NEXTEST=* scripts/cargo-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/cargo-agent.sh*)
 ---
 
 # Cargo Agent
@@ -21,31 +21,31 @@ Run the `cargo-agent.sh` script for lean, structured Rust workflow output design
 ## Script Location
 
 ```
-~/projects/x-agent/scripts/cargo-agent.sh
+scripts/cargo-agent.sh
 ```
 
 ## Usage
 
 ### Run Full Suite (fmt + clippy + tests)
 ```bash
-~/projects/x-agent/scripts/cargo-agent.sh
+scripts/cargo-agent.sh
 ```
 
 ### Run Individual Steps
 ```bash
-~/projects/x-agent/scripts/cargo-agent.sh fmt      # format check only
-~/projects/x-agent/scripts/cargo-agent.sh check    # cargo check only
-~/projects/x-agent/scripts/cargo-agent.sh clippy   # clippy only
-~/projects/x-agent/scripts/cargo-agent.sh test     # tests only
-~/projects/x-agent/scripts/cargo-agent.sh all      # full suite (default)
+scripts/cargo-agent.sh fmt      # format check only
+scripts/cargo-agent.sh check    # cargo check only
+scripts/cargo-agent.sh clippy   # clippy only
+scripts/cargo-agent.sh test     # tests only
+scripts/cargo-agent.sh all      # full suite (default)
 ```
 
 ### Run Specific Tests
 Pass extra arguments through to cargo-nextest:
 ```bash
-~/projects/x-agent/scripts/cargo-agent.sh test test_login        # tests matching "test_login"
-~/projects/x-agent/scripts/cargo-agent.sh test -p db             # tests in the db crate
-~/projects/x-agent/scripts/cargo-agent.sh test -p api test_auth  # "test_auth" in api crate
+scripts/cargo-agent.sh test test_login        # tests matching "test_login"
+scripts/cargo-agent.sh test -p db             # tests in the db crate
+scripts/cargo-agent.sh test -p api test_auth  # "test_auth" in api crate
 ```
 
 ## Environment Knobs

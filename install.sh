@@ -23,11 +23,8 @@ TMP_DIR=""
 SOURCE_DIR=""
 SOURCE_MODE="remote"
 
-# Available skills to install
+# Available skills to install (each has its own scripts/ subdirectory)
 SKILLS="cargo-agent npm-agent"
-
-# Scripts each skill needs
-SCRIPTS="cargo-agent.sh npm-agent.sh"
 
 info() {
   printf "[%s] %s\n" "$PROJECT_NAME" "$*"
@@ -134,7 +131,7 @@ fetch_to_file() {
 # Detect if we're running from a local checkout or need to fetch from remote.
 resolve_source_dir() {
   # Check if running from inside the repo
-  if [ -d "./skills" ] && [ -d "./scripts" ]; then
+  if [ -d "./skills" ]; then
     SOURCE_DIR="$(pwd)"
     SOURCE_MODE="local"
     info "Using local source at ${SOURCE_DIR}."
@@ -145,7 +142,7 @@ resolve_source_dir() {
   case "$0" in
     */*)
       script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
-      if [ -n "$script_dir" ] && [ -d "$script_dir/skills" ] && [ -d "$script_dir/scripts" ]; then
+      if [ -n "$script_dir" ] && [ -d "$script_dir/skills" ]; then
         SOURCE_DIR="$script_dir"
         SOURCE_MODE="local"
         info "Using source next to install.sh at ${SOURCE_DIR}."
@@ -159,28 +156,27 @@ resolve_source_dir() {
   SOURCE_DIR="${TMP_DIR}"
   SOURCE_MODE="remote"
 
-  mkdir -p "${SOURCE_DIR}/scripts"
-
-  # Fetch scripts
-  for script in $SCRIPTS; do
-    src_url="${RAW_BASE}/scripts/${script}"
-    dest="${SOURCE_DIR}/scripts/${script}"
-    info "Fetching scripts/${script}..."
-    if ! fetch_to_file "$src_url" "$dest"; then
-      die "Unable to download ${src_url}"
-    fi
-    chmod +x "$dest"
-  done
-
-  # Fetch skill definitions
+  # Fetch each skill's SKILL.md and scripts
   for skill in $SKILLS; do
-    mkdir -p "${SOURCE_DIR}/skills/${skill}"
+    mkdir -p "${SOURCE_DIR}/skills/${skill}/scripts"
+
+    # Fetch SKILL.md
     src_url="${RAW_BASE}/skills/${skill}/SKILL.md"
     dest="${SOURCE_DIR}/skills/${skill}/SKILL.md"
     info "Fetching skills/${skill}/SKILL.md..."
     if ! fetch_to_file "$src_url" "$dest"; then
       die "Unable to download ${src_url}"
     fi
+
+    # Fetch the skill's script
+    script_name="${skill}.sh"
+    src_url="${RAW_BASE}/skills/${skill}/scripts/${script_name}"
+    dest="${SOURCE_DIR}/skills/${skill}/scripts/${script_name}"
+    info "Fetching skills/${skill}/scripts/${script_name}..."
+    if ! fetch_to_file "$src_url" "$dest"; then
+      die "Unable to download ${src_url}"
+    fi
+    chmod +x "$dest"
   done
 }
 
@@ -199,10 +195,7 @@ install_skill_to_root() {
   else
     mkdir -p "$target"
     cp -R "${SOURCE_DIR}/skills/${skill}/." "$target/"
-    # Also copy scripts into the skill dir so it's self-contained
-    mkdir -p "${target}/scripts"
-    cp "${SOURCE_DIR}/scripts/"*.sh "${target}/scripts/"
-    chmod +x "${target}/scripts/"*.sh
+    chmod +x "${target}/scripts/"*.sh 2>/dev/null || true
     info "Installed ${skill} to ${target}"
   fi
 }
@@ -219,9 +212,9 @@ patch_skill_paths() {
   # For remote installs, update paths to point at the skill's bundled scripts dir.
   if [ "$SOURCE_MODE" = "remote" ]; then
     scripts_dir="${root}/${skill}/scripts"
-    # Replace ~/projects/x-agent/scripts/ with the actual installed path
+    # Replace relative scripts/ paths with the actual installed path
     if command -v sed >/dev/null 2>&1; then
-      sed -i.bak "s|~/projects/x-agent/scripts/|${scripts_dir}/|g" "$skill_md"
+      sed -i.bak "s|scripts/${skill}.sh|${scripts_dir}/${skill}.sh|g" "$skill_md"
       rm -f "${skill_md}.bak"
     fi
   fi

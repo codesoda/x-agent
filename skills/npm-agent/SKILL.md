@@ -7,10 +7,10 @@ description: |
   Triggers on: npm agent, run npm checks, node checks, lint and test, verify node code, run js checks.
 context: fork
 allowed-tools:
-  - Bash(~/projects/x-agent/scripts/npm-agent.sh*)
-  - Bash(RUN_*=* ~/projects/x-agent/scripts/npm-agent.sh*)
-  - Bash(MAX_LINES=* ~/projects/x-agent/scripts/npm-agent.sh*)
-  - Bash(KEEP_DIR=* ~/projects/x-agent/scripts/npm-agent.sh*)
+  - Bash(scripts/npm-agent.sh*)
+  - Bash(RUN_*=* scripts/npm-agent.sh*)
+  - Bash(MAX_LINES=* scripts/npm-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/npm-agent.sh*)
 ---
 
 # NPM Agent
@@ -20,24 +20,24 @@ Run the `npm-agent.sh` script for lean, structured Node.js workflow output desig
 ## Script Location
 
 ```
-~/projects/x-agent/scripts/npm-agent.sh
+scripts/npm-agent.sh
 ```
 
 ## Usage
 
 ### Run Full Suite (format + lint + typecheck + test + build)
 ```bash
-~/projects/x-agent/scripts/npm-agent.sh
+scripts/npm-agent.sh
 ```
 
 ### Run Individual Steps
 ```bash
-~/projects/x-agent/scripts/npm-agent.sh format      # format check only
-~/projects/x-agent/scripts/npm-agent.sh lint         # lint only
-~/projects/x-agent/scripts/npm-agent.sh typecheck    # typecheck only
-~/projects/x-agent/scripts/npm-agent.sh test         # tests only
-~/projects/x-agent/scripts/npm-agent.sh build        # build only
-~/projects/x-agent/scripts/npm-agent.sh all          # full suite (default)
+scripts/npm-agent.sh format      # format check only
+scripts/npm-agent.sh lint         # lint only
+scripts/npm-agent.sh typecheck    # typecheck only
+scripts/npm-agent.sh test         # tests only
+scripts/npm-agent.sh build        # build only
+scripts/npm-agent.sh all          # full suite (default)
 ```
 
 ## Environment Knobs
