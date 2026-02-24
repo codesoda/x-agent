@@ -1,0 +1,327 @@
+#!/bin/sh
+set -eu
+
+# x-agent installer: installs agent-friendly workflow scripts and Claude/Codex skills.
+# Works via: curl -sSf <raw-url>/install.sh | sh
+# Or locally: sh install.sh
+
+PROJECT_NAME="x-agent"
+REPO_OWNER="${X_AGENT_REPO_OWNER:-codesoda}"
+REPO_NAME="${X_AGENT_REPO_NAME:-x-agent}"
+REPO_REF="${X_AGENT_REPO_REF:-main}"
+RAW_BASE="${X_AGENT_RAW_BASE:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}}"
+
+CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+
+AUTO_YES=0
+SKIP_DEPS=0
+INSTALL_CODEX=1
+INSTALL_CLAUDE=1
+
+TMP_DIR=""
+SOURCE_DIR=""
+SOURCE_MODE="remote"
+
+# Available skills to install
+SKILLS="cargo-agent npm-agent"
+
+# Scripts each skill needs
+SCRIPTS="cargo-agent.sh npm-agent.sh"
+
+info() {
+  printf "[%s] %s\n" "$PROJECT_NAME" "$*"
+}
+
+warn() {
+  printf "[%s] WARNING: %s\n" "$PROJECT_NAME" "$*" >&2
+}
+
+die() {
+  printf "[%s] ERROR: %s\n" "$PROJECT_NAME" "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Install x-agent skills and scripts into local agent skill directories.
+
+Usage:
+  sh install.sh [options]
+  curl -sSf https://raw.githubusercontent.com/codesoda/x-agent/main/install.sh | sh
+
+Options:
+  --yes          Non-interactive mode; accept default install prompts.
+  --skip-deps    Skip dependency checks.
+  --codex-only   Only install to ~/.codex/skills.
+  --claude-only  Only install to ~/.claude/skills.
+  --help         Show this help text.
+
+Environment variables:
+  CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
+  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
+  X_AGENT_REPO_OWNER Override repo owner for remote fetches.
+  X_AGENT_REPO_NAME  Override repo name for remote fetches.
+  X_AGENT_REPO_REF   Override repo ref/branch for remote fetches.
+  X_AGENT_RAW_BASE   Override full raw base URL for remote fetches.
+EOF
+}
+
+cleanup() {
+  if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+
+trap cleanup EXIT INT TERM
+
+prompt_yes_no() {
+  question="$1"
+  default="${2:-yes}"
+
+  if [ "$AUTO_YES" -eq 1 ]; then
+    return 0
+  fi
+
+  if [ "$default" = "yes" ]; then
+    prompt="[Y/n]"
+    fallback="yes"
+  else
+    prompt="[y/N]"
+    fallback="no"
+  fi
+
+  if [ -r /dev/tty ]; then
+    while :; do
+      printf "%s %s " "$question" "$prompt" > /dev/tty
+      if ! IFS= read -r answer < /dev/tty; then
+        break
+      fi
+      case "$answer" in
+        [Yy]|[Yy][Ee][Ss]) return 0 ;;
+        [Nn]|[Nn][Oo]) return 1 ;;
+        "")
+          if [ "$fallback" = "yes" ]; then
+            return 0
+          fi
+          return 1
+          ;;
+        *) printf "Please answer yes or no.\n" > /dev/tty ;;
+      esac
+    done
+  fi
+
+  [ "$fallback" = "yes" ]
+}
+
+fetch_to_file() {
+  url="$1"
+  out="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$out"
+    return 0
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    wget -qO "$out" "$url"
+    return 0
+  fi
+
+  return 1
+}
+
+# Detect if we're running from a local checkout or need to fetch from remote.
+resolve_source_dir() {
+  # Check if running from inside the repo
+  if [ -d "./skills" ] && [ -d "./scripts" ]; then
+    SOURCE_DIR="$(pwd)"
+    SOURCE_MODE="local"
+    info "Using local source at ${SOURCE_DIR}."
+    return 0
+  fi
+
+  # Check relative to the script location
+  case "$0" in
+    */*)
+      script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+      if [ -n "$script_dir" ] && [ -d "$script_dir/skills" ] && [ -d "$script_dir/scripts" ]; then
+        SOURCE_DIR="$script_dir"
+        SOURCE_MODE="local"
+        info "Using source next to install.sh at ${SOURCE_DIR}."
+        return 0
+      fi
+      ;;
+  esac
+
+  # Remote fetch
+  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/${PROJECT_NAME}.XXXXXX")"
+  SOURCE_DIR="${TMP_DIR}"
+  SOURCE_MODE="remote"
+
+  mkdir -p "${SOURCE_DIR}/scripts"
+
+  # Fetch scripts
+  for script in $SCRIPTS; do
+    src_url="${RAW_BASE}/scripts/${script}"
+    dest="${SOURCE_DIR}/scripts/${script}"
+    info "Fetching scripts/${script}..."
+    if ! fetch_to_file "$src_url" "$dest"; then
+      die "Unable to download ${src_url}"
+    fi
+    chmod +x "$dest"
+  done
+
+  # Fetch skill definitions
+  for skill in $SKILLS; do
+    mkdir -p "${SOURCE_DIR}/skills/${skill}"
+    src_url="${RAW_BASE}/skills/${skill}/SKILL.md"
+    dest="${SOURCE_DIR}/skills/${skill}/SKILL.md"
+    info "Fetching skills/${skill}/SKILL.md..."
+    if ! fetch_to_file "$src_url" "$dest"; then
+      die "Unable to download ${src_url}"
+    fi
+  done
+}
+
+# Install a single skill to a skills root, with scripts alongside it.
+install_skill_to_root() {
+  root="$1"
+  skill="$2"
+  target="${root}/${skill}"
+
+  mkdir -p "$root"
+  rm -rf "$target"
+
+  if [ "$SOURCE_MODE" = "local" ]; then
+    ln -s "${SOURCE_DIR}/skills/${skill}" "$target"
+    info "Symlinked ${skill} to ${target} -> ${SOURCE_DIR}/skills/${skill}"
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/skills/${skill}/." "$target/"
+    # Also copy scripts into the skill dir so it's self-contained
+    mkdir -p "${target}/scripts"
+    cp "${SOURCE_DIR}/scripts/"*.sh "${target}/scripts/"
+    chmod +x "${target}/scripts/"*.sh
+    info "Installed ${skill} to ${target}"
+  fi
+}
+
+# Rewrite SKILL.md paths to point at the actual installed script location.
+patch_skill_paths() {
+  root="$1"
+  skill="$2"
+  skill_md="${root}/${skill}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then return; fi
+
+  # For local (symlink) installs, paths already point to the right place via the repo.
+  # For remote installs, update paths to point at the skill's bundled scripts dir.
+  if [ "$SOURCE_MODE" = "remote" ]; then
+    scripts_dir="${root}/${skill}/scripts"
+    # Replace ~/projects/x-agent/scripts/ with the actual installed path
+    if command -v sed >/dev/null 2>&1; then
+      sed -i.bak "s|~/projects/x-agent/scripts/|${scripts_dir}/|g" "$skill_md"
+      rm -f "${skill_md}.bak"
+    fi
+  fi
+}
+
+check_optional_deps() {
+  info "Checking optional dependencies..."
+  all_ok=1
+
+  for dep in jq; do
+    if command -v "$dep" >/dev/null 2>&1; then
+      info "  Found: ${dep}"
+    else
+      warn "  Missing: ${dep} (needed by cargo-agent)"
+      all_ok=0
+    fi
+  done
+
+  if command -v cargo >/dev/null 2>&1; then
+    info "  Found: cargo"
+  else
+    warn "  Missing: cargo (needed by cargo-agent)"
+    all_ok=0
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    info "  Found: node"
+  else
+    warn "  Missing: node (needed by npm-agent)"
+    all_ok=0
+  fi
+
+  if [ "$all_ok" -eq 0 ]; then
+    warn "Some optional dependencies are missing. Skills will skip steps that need them."
+  fi
+}
+
+# --- Main ---
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes)
+      AUTO_YES=1
+      ;;
+    --skip-deps)
+      SKIP_DEPS=1
+      ;;
+    --codex-only)
+      INSTALL_CODEX=1
+      INSTALL_CLAUDE=0
+      ;;
+    --claude-only)
+      INSTALL_CODEX=0
+      INSTALL_CLAUDE=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown option: $1 (use --help)"
+      ;;
+  esac
+  shift
+done
+
+info "x-agent installer"
+info "=================="
+
+resolve_source_dir
+
+if [ "$SKIP_DEPS" -eq 0 ]; then
+  check_optional_deps
+else
+  info "Skipping dependency checks (--skip-deps)."
+fi
+
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  if prompt_yes_no "Install skills to ${CLAUDE_SKILLS_DIR}?" yes; then
+    for skill in $SKILLS; do
+      install_skill_to_root "$CLAUDE_SKILLS_DIR" "$skill"
+      patch_skill_paths "$CLAUDE_SKILLS_DIR" "$skill"
+    done
+  else
+    info "Skipped Claude install."
+  fi
+fi
+
+if [ "$INSTALL_CODEX" -eq 1 ]; then
+  if prompt_yes_no "Install skills to ${CODEX_SKILLS_DIR}?" yes; then
+    for skill in $SKILLS; do
+      install_skill_to_root "$CODEX_SKILLS_DIR" "$skill"
+      patch_skill_paths "$CODEX_SKILLS_DIR" "$skill"
+    done
+  else
+    info "Skipped Codex install."
+  fi
+fi
+
+info ""
+info "Installed skills: ${SKILLS}"
+info ""
+info "Done."
