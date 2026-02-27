@@ -17,6 +17,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
+| `terra-agent` | Terraform | fmt (check/fix), validate, lint (tflint) |
 
 ## Quick Start
 
@@ -44,6 +45,9 @@ path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
 
 # Node.js project
 path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
+
+# Terraform project
+path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
 
 ## Usage
@@ -68,6 +72,16 @@ npm-agent.sh typecheck      # type checking only
 ```
 
 npm-agent auto-detects your package manager (bun, pnpm, yarn, npm) and finds formatters/linters from package.json scripts or common tools (biome, eslint, prettier, tsc).
+
+### terra-agent
+
+```sh
+terra-agent.sh                              # full suite: fmt(check) + validate + lint
+terra-agent.sh fmt-check                    # report formatting drift
+terra-agent.sh fmt-fix                      # auto-fix formatting
+TERRAFORM_CHDIR=infra terra-agent.sh all    # run in infra/
+FMT_MODE=fix terra-agent.sh fmt             # fmt using env-selected mode
+```
 
 ## Environment Knobs
 
@@ -117,6 +131,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 
 - `/cargo-agent` — run Rust checks
 - `/npm-agent` — run Node.js checks
+- `/terra-agent` — run Terraform checks/fixes
 
 ## License
 

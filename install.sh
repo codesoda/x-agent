@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="cargo-agent npm-agent"
+SKILLS="cargo-agent npm-agent terra-agent"
 
 info() {
   printf "[%s] %s\n" "$PROJECT_NAME" "$*"
@@ -245,6 +245,19 @@ check_optional_deps() {
   else
     warn "  Missing: node (needed by npm-agent)"
     all_ok=0
+  fi
+
+  if command -v terraform >/dev/null 2>&1; then
+    info "  Found: terraform"
+  else
+    warn "  Missing: terraform (needed by terra-agent)"
+    all_ok=0
+  fi
+
+  if command -v tflint >/dev/null 2>&1; then
+    info "  Found: tflint"
+  else
+    warn "  Missing: tflint (optional for terra-agent lint step)"
   fi
 
   if [ "$all_ok" -eq 0 ]; then

@@ -1,0 +1,74 @@
+---
+name: terra-agent
+description: |
+  Run terra-agent.sh — a lean Terraform workflow runner that reports formatting/validation status
+  and can also auto-fix Terraform formatting.
+  Use when: running Terraform fmt checks, auto-fixing fmt, validate, or optional tflint checks.
+  Triggers on: terra agent, terraform fmt check, terraform fmt fix, terraform validate, run terraform checks.
+context: fork
+allowed-tools:
+  - Bash(scripts/terra-agent.sh*)
+  - Bash(RUN_*=* scripts/terra-agent.sh*)
+  - Bash(MAX_LINES=* scripts/terra-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/terra-agent.sh*)
+  - Bash(FMT_MODE=* scripts/terra-agent.sh*)
+  - Bash(TERRAFORM_CHDIR=* scripts/terra-agent.sh*)
+  - Bash(TF_CHDIR=* scripts/terra-agent.sh*)
+---
+
+# Terra Agent
+
+Run the `terra-agent.sh` script for lean, structured Terraform workflow output designed for coding agents.
+
+## Script Location
+
+```bash
+scripts/terra-agent.sh
+```
+
+## Usage
+
+### Run Full Suite (fmt + validate + lint)
+```bash
+scripts/terra-agent.sh
+```
+
+### Run Individual Steps
+```bash
+scripts/terra-agent.sh fmt         # fmt in FMT_MODE (default: check)
+scripts/terra-agent.sh fmt-check   # report files needing formatting
+scripts/terra-agent.sh fmt-fix     # auto-fix formatting
+scripts/terra-agent.sh validate    # terraform validate
+scripts/terra-agent.sh lint        # tflint (if installed)
+scripts/terra-agent.sh all         # full suite (default)
+```
+
+## Environment Knobs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUN_FMT` | `1` | Set to `0` to skip fmt |
+| `RUN_VALIDATE` | `1` | Set to `0` to skip validate |
+| `RUN_LINT` | `1` | Set to `0` to skip lint |
+| `FMT_MODE` | `check` | `check` (report-only) or `fix` (rewrite files) |
+| `FMT_RECURSIVE` | `1` | Set to `0` to disable recursive fmt |
+| `TFLINT_RECURSIVE` | `1` | Set to `0` to disable recursive tflint |
+| `TERRAFORM_CHDIR` | `.` | Terraform root directory to run in |
+| `TF_CHDIR` | `.` | Alias for `TERRAFORM_CHDIR` |
+| `MAX_LINES` | `40` | Max diagnostic lines printed per step |
+| `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
+
+## Output Format
+
+- Each step prints a header (`Step: fmt`, `Step: validate`, etc.)
+- Results are `PASS`, `FAIL`, or `SKIP`
+- On failure, output is truncated to `MAX_LINES`
+- Full logs are saved to a temp directory (path printed in output)
+- Overall result is printed at the end: `Overall: PASS` or `Overall: FAIL`
+
+## Important Notes
+
+- Run from the Terraform root, or set `TERRAFORM_CHDIR=infra` (for example)
+- `fmt-check` is non-mutating and fails when formatting drift exists
+- `fmt-fix` rewrites files to canonical Terraform formatting
+- `lint` is skipped gracefully when `tflint` is not installed
