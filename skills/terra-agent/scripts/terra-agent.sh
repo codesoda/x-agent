@@ -11,6 +11,7 @@ RUN_FMT="${RUN_FMT:-1}"                # set to 0 to skip fmt
 RUN_INIT="${RUN_INIT:-1}"              # set to 0 to skip init
 RUN_VALIDATE="${RUN_VALIDATE:-1}"      # set to 0 to skip validate
 RUN_LINT="${RUN_LINT:-1}"              # set to 0 to skip lint
+RUN_PLAN_SAFE="${RUN_PLAN_SAFE:-0}"    # set to 1 to run plan-safe in all
 FMT_MODE="${FMT_MODE:-check}"          # check|fix
 FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
@@ -195,6 +196,84 @@ run_init() {
   [[ "$ok" == "1" ]]
 }
 
+run_plan_safe() {
+  step "plan-safe"
+  local init_log="$OUTDIR/plan-safe.init.log"
+  local log="$OUTDIR/plan-safe.log"
+  local ok=1
+  local changed=0
+  local rc=0
+  local -a init_args=(
+    init
+    -backend=false
+    -input=false
+    -lockfile=readonly
+    -get=false
+    -upgrade=false
+    -no-color
+  )
+  local -a plan_args=(
+    plan
+    -refresh=false
+    -lock=false
+    -input=false
+    -detailed-exitcode
+    -no-color
+  )
+
+  # Run safe init first so plan-safe works from a clean temp TF_DATA_DIR.
+  if tf "${init_args[@]}" >"$init_log" 2>&1; then
+    :
+  else
+    ok=0
+  fi
+
+  if [[ "$ok" == "1" ]]; then
+    set +e
+    tf "${plan_args[@]}" >"$log" 2>&1
+    rc=$?
+    set -e
+
+    case "$rc" in
+      0)
+        changed=0
+        ;;
+      2)
+        changed=1
+        ;;
+      *)
+        ok=0
+        ;;
+    esac
+  fi
+
+  echo "Mode: safe (non-mutating)"
+  echo "TF_DATA_DIR: $TF_DATA_DIR_PATH"
+  if [[ "$ok" == "1" ]]; then
+    echo "Changes detected: $([[ "$changed" == "1" ]] && echo yes || echo no)"
+  fi
+
+  if [[ "$ok" == "0" ]]; then
+    if [[ -s "$init_log" ]]; then
+      echo
+      echo "Init output (first ${MAX_LINES} lines):"
+      head -n "$MAX_LINES" "$init_log"
+    fi
+    if [[ -s "$log" ]]; then
+      echo
+      echo "Plan output (first ${MAX_LINES} lines):"
+      head -n "$MAX_LINES" "$log"
+    fi
+  fi
+
+  echo
+  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  echo "Init log: $init_log"
+  echo "Full log: $log"
+  fmt_elapsed
+  [[ "$ok" == "1" ]]
+}
+
 run_lint() {
   step "lint"
   local log="$OUTDIR/lint.log"
@@ -248,6 +327,7 @@ Usage:
   terra-agent fmt-check                     # report-only format check
   terra-agent fmt-fix                       # auto-fix formatting
   terra-agent init                          # safe non-mutating init
+  terra-agent plan-safe                     # safe non-mutating plan (passes on exit 0 or 2)
   terra-agent validate                      # terraform validate
   terra-agent lint                          # tflint (if installed)
   terra-agent all                           # full suite (default)
@@ -261,6 +341,7 @@ Env knobs:
   RUN_INIT=0|1
   RUN_VALIDATE=0|1
   RUN_LINT=0|1
+  RUN_PLAN_SAFE=0|1            # set to 1 to include in "all"
   FMT_MODE=check|fix             # default: check
   FMT_RECURSIVE=0|1              # default: 1
   TFLINT_RECURSIVE=0|1           # default: 1
@@ -270,7 +351,9 @@ Examples:
   TERRAFORM_CHDIR=infra terra-agent fmt-check
   TERRAFORM_CHDIR=infra terra-agent fmt-fix
   TERRAFORM_CHDIR=infra terra-agent init
+  TERRAFORM_CHDIR=infra terra-agent plan-safe
   FMT_MODE=fix TERRAFORM_CHDIR=infra terra-agent fmt
+  RUN_PLAN_SAFE=1 TERRAFORM_CHDIR=infra terra-agent all
   RUN_LINT=0 TERRAFORM_CHDIR=infra terra-agent all
 EOF
 }
@@ -296,6 +379,7 @@ main() {
     fmt-check) run_fmt "check" || overall_ok=0 ;;
     fmt-fix)   run_fmt "fix" || overall_ok=0 ;;
     init)      run_init || overall_ok=0 ;;
+    plan-safe) run_plan_safe || overall_ok=0 ;;
     validate)  run_validate || overall_ok=0 ;;
     lint)      run_lint || overall_ok=0 ;;
     all)
@@ -303,6 +387,7 @@ main() {
       if [[ "$RUN_INIT" == "1" ]]; then run_init || overall_ok=0; fi
       if [[ "$RUN_VALIDATE" == "1" ]]; then run_validate || overall_ok=0; fi
       if [[ "$RUN_LINT" == "1" ]]; then run_lint || overall_ok=0; fi
+      if [[ "$RUN_PLAN_SAFE" == "1" ]]; then run_plan_safe || overall_ok=0; fi
       ;;
     *)
       echo "Unknown command: $cmd" >&2

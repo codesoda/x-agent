@@ -327,7 +327,7 @@ print_agents_md_snippet() {
         echo "- Node.js: use \`/npm-agent\` (format/lint/typecheck/test/build)."
         ;;
       terra-agent)
-        echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/validate/lint)."
+        echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/init/plan-safe/validate/lint)."
         ;;
     esac
   done
@@ -336,6 +336,7 @@ print_agents_md_snippet() {
   echo "- If a change touches multiple stacks, run all matching skills."
   if skill_selected "terra-agent"; then
     echo "- For Terraform formatting drift, run \`/terra-agent fmt-check\`; if it fails, run \`/terra-agent fmt-fix\` and then re-run checks."
+    echo "- For safe planning, run \`/terra-agent plan-safe\` (exit code 2 = changes detected, not failure)."
   fi
   echo "- Resolve all FAIL results before completing the task."
   echo "----- END AGENTS/CLAUDE SNIPPET -----"
