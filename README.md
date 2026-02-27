@@ -17,7 +17,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
-| `terra-agent` | Terraform | fmt (check/fix), validate, lint (tflint) |
+| `terra-agent` | Terraform | fmt (check/fix), safe init, validate, lint (tflint) |
 
 ## Quick Start
 
@@ -81,9 +81,12 @@ npm-agent auto-detects your package manager (bun, pnpm, yarn, npm) and finds for
 terra-agent.sh                              # full suite: fmt(check) + validate + lint
 terra-agent.sh fmt-check                    # report formatting drift
 terra-agent.sh fmt-fix                      # auto-fix formatting
+terra-agent.sh init                         # safe non-mutating init
 TERRAFORM_CHDIR=infra terra-agent.sh all    # run in infra/
 FMT_MODE=fix terra-agent.sh fmt             # fmt using env-selected mode
 ```
+
+`terra-agent` init is safety-first by default: `-backend=false`, `-input=false`, `-get=false`, `-upgrade=false`, `-lockfile=readonly`, and temp `TF_DATA_DIR` so project files are not mutated.
 
 ## Environment Knobs
 
