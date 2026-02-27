@@ -1,0 +1,13 @@
+{
+  "name": "npm-agent-issues-scenario",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "format": "node -e \"process.exit(0)\"",
+    "lint": "node -e \"console.error('lint failed'); process.exit(1)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"process.exit(0)\"",
+    "build": "node -e \"process.exit(0)\""
+  }
+}
+

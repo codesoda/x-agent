@@ -1,0 +1,42 @@
+Package manager: npm
+------------------------------------------------------------
+Step: format
+
+Result: PASS
+Full log: /tmp/npm-agent.rB30i2/format.log
+Time: 1s
+------------------------------------------------------------
+Step: lint
+
+Output (first 40 lines):
+
+> npm-agent-issues-scenario@1.0.0 lint
+> node -e "console.error('lint failed'); process.exit(1)"
+
+lint failed
+
+Result: FAIL
+Full log: /tmp/npm-agent.rB30i2/lint.log
+Time: 0s
+------------------------------------------------------------
+Step: typecheck
+
+Result: PASS
+Full log: /tmp/npm-agent.rB30i2/typecheck.log
+Time: 0s
+------------------------------------------------------------
+Step: test
+
+Result: PASS
+Full log: /tmp/npm-agent.rB30i2/test.log
+Time: 0s
+------------------------------------------------------------
+Step: build
+
+Result: PASS
+Full log: /tmp/npm-agent.rB30i2/build.log
+Time: 1s
+------------------------------------------------------------
+Overall: FAIL
+Logs: /tmp/npm-agent.rB30i2
+Logs kept in: /tmp/npm-agent.rB30i2

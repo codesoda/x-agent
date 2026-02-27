@@ -1,0 +1,34 @@
+Package manager: npm
+------------------------------------------------------------
+Step: format
+
+Result: PASS
+Full log: /tmp/npm-agent.OcFrvd/format.log
+Time: 0s
+------------------------------------------------------------
+Step: lint
+
+Result: PASS
+Full log: /tmp/npm-agent.OcFrvd/lint.log
+Time: 1s
+------------------------------------------------------------
+Step: typecheck
+
+Result: PASS
+Full log: /tmp/npm-agent.OcFrvd/typecheck.log
+Time: 0s
+------------------------------------------------------------
+Step: test
+
+Result: PASS
+Full log: /tmp/npm-agent.OcFrvd/test.log
+Time: 0s
+------------------------------------------------------------
+Step: build
+
+Result: PASS
+Full log: /tmp/npm-agent.OcFrvd/build.log
+Time: 0s
+------------------------------------------------------------
+Overall: PASS
+Logs: /tmp/npm-agent.OcFrvd
