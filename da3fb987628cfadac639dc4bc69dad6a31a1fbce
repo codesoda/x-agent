@@ -1,0 +1,12 @@
+---
+cadence_version: 2
+agent: codex
+session_id: 019c9d25-85f4-7701-a2f8-980a9f011079
+repo: /Users/chrisraethke/projects/x-agent
+commit: da3fb987628cfadac639dc4bc69dad6a31a1fbce
+confidence: time_window_match
+session_start: 2026-02-27T03:30:07Z
+payload_blob: 77e5688d960e8b29c0c7920b584dbbfafb67876d
+payload_sha256: d67bd710545b488ce46361c0d0af127ca085e1ee2285a6b069b8c3644083c4fb
+payload_encoding: zstd+pgp
+---
