@@ -25,6 +25,7 @@ SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
 SKILLS="cargo-agent npm-agent terra-agent"
+SELECTED_SKILLS=""
 
 info() {
   printf "[%s] %s\n" "$PROJECT_NAME" "$*"
@@ -53,6 +54,10 @@ Options:
   --codex-only   Only install to ~/.codex/skills.
   --claude-only  Only install to ~/.claude/skills.
   --help         Show this help text.
+
+Notes:
+  Interactive mode prompts per x-agent skill and install destination.
+  At the end, the installer prints a copy/paste snippet for AGENTS.md/CLAUDE.md.
 
 Environment variables:
   CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
@@ -88,7 +93,7 @@ prompt_yes_no() {
     fallback="no"
   fi
 
-  if [ -r /dev/tty ]; then
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
     while :; do
       printf "%s %s " "$question" "$prompt" > /dev/tty
       if ! IFS= read -r answer < /dev/tty; then
@@ -109,6 +114,37 @@ prompt_yes_no() {
   fi
 
   [ "$fallback" = "yes" ]
+}
+
+skill_selected() {
+  skill="$1"
+  case " ${SELECTED_SKILLS} " in
+    *" ${skill} "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+add_selected_skill() {
+  skill="$1"
+  if [ -z "$SELECTED_SKILLS" ]; then
+    SELECTED_SKILLS="$skill"
+  else
+    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
+  fi
+}
+
+select_skills() {
+  if [ "$AUTO_YES" -eq 1 ]; then
+    SELECTED_SKILLS="$SKILLS"
+    return 0
+  fi
+
+  info "Select x-agent skills to install:"
+  for skill in $SKILLS; do
+    if prompt_yes_no "Install ${skill}?" yes; then
+      add_selected_skill "$skill"
+    fi
+  done
 }
 
 fetch_to_file() {
@@ -156,8 +192,8 @@ resolve_source_dir() {
   SOURCE_DIR="${TMP_DIR}"
   SOURCE_MODE="remote"
 
-  # Fetch each skill's SKILL.md and scripts
-  for skill in $SKILLS; do
+  # Fetch each selected skill's SKILL.md and scripts
+  for skill in $SELECTED_SKILLS; do
     mkdir -p "${SOURCE_DIR}/skills/${skill}/scripts"
 
     # Fetch SKILL.md
@@ -224,45 +260,84 @@ check_optional_deps() {
   info "Checking optional dependencies..."
   all_ok=1
 
-  for dep in jq; do
-    if command -v "$dep" >/dev/null 2>&1; then
-      info "  Found: ${dep}"
+  if skill_selected "cargo-agent"; then
+    for dep in jq; do
+      if command -v "$dep" >/dev/null 2>&1; then
+        info "  Found: ${dep}"
+      else
+        warn "  Missing: ${dep} (needed by cargo-agent)"
+        all_ok=0
+      fi
+    done
+
+    if command -v cargo >/dev/null 2>&1; then
+      info "  Found: cargo"
     else
-      warn "  Missing: ${dep} (needed by cargo-agent)"
+      warn "  Missing: cargo (needed by cargo-agent)"
       all_ok=0
     fi
-  done
-
-  if command -v cargo >/dev/null 2>&1; then
-    info "  Found: cargo"
-  else
-    warn "  Missing: cargo (needed by cargo-agent)"
-    all_ok=0
   fi
 
-  if command -v node >/dev/null 2>&1; then
-    info "  Found: node"
-  else
-    warn "  Missing: node (needed by npm-agent)"
-    all_ok=0
+  if skill_selected "npm-agent"; then
+    if command -v node >/dev/null 2>&1; then
+      info "  Found: node"
+    else
+      warn "  Missing: node (needed by npm-agent)"
+      all_ok=0
+    fi
   fi
 
-  if command -v terraform >/dev/null 2>&1; then
-    info "  Found: terraform"
-  else
-    warn "  Missing: terraform (needed by terra-agent)"
-    all_ok=0
-  fi
+  if skill_selected "terra-agent"; then
+    if command -v terraform >/dev/null 2>&1; then
+      info "  Found: terraform"
+    else
+      warn "  Missing: terraform (needed by terra-agent)"
+      all_ok=0
+    fi
 
-  if command -v tflint >/dev/null 2>&1; then
-    info "  Found: tflint"
-  else
-    warn "  Missing: tflint (optional for terra-agent lint step)"
+    if command -v tflint >/dev/null 2>&1; then
+      info "  Found: tflint"
+    else
+      warn "  Missing: tflint (optional for terra-agent lint step)"
+    fi
   fi
 
   if [ "$all_ok" -eq 0 ]; then
     warn "Some optional dependencies are missing. Skills will skip steps that need them."
   fi
+}
+
+print_agents_md_snippet() {
+  if [ -z "$SELECTED_SKILLS" ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "----- BEGIN AGENTS/CLAUDE SNIPPET -----"
+  echo "## x-agent checks"
+  echo ""
+  echo "Before completing work, run the relevant x-agent skill(s) for the stacks you changed:"
+
+  for skill in $SELECTED_SKILLS; do
+    case "$skill" in
+      cargo-agent)
+        echo "- Rust: use \`/cargo-agent\` (fmt/check/clippy/test)."
+        ;;
+      npm-agent)
+        echo "- Node.js: use \`/npm-agent\` (format/lint/typecheck/test/build)."
+        ;;
+      terra-agent)
+        echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/validate/lint)."
+        ;;
+    esac
+  done
+
+  echo "- If a change touches multiple stacks, run all matching skills."
+  if skill_selected "terra-agent"; then
+    echo "- For Terraform formatting drift, run \`/terra-agent fmt-check\`; if it fails, run \`/terra-agent fmt-fix\` and then re-run checks."
+  fi
+  echo "- Resolve all FAIL results before completing the task."
+  echo "----- END AGENTS/CLAUDE SNIPPET -----"
 }
 
 # --- Main ---
@@ -297,6 +372,13 @@ done
 info "x-agent installer"
 info "=================="
 
+select_skills
+if [ -z "$SELECTED_SKILLS" ]; then
+  info "No skills selected. Nothing to install."
+  info "Done."
+  exit 0
+fi
+
 resolve_source_dir
 
 if [ "$SKIP_DEPS" -eq 0 ]; then
@@ -307,7 +389,7 @@ fi
 
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CLAUDE_SKILLS_DIR}?" yes; then
-    for skill in $SKILLS; do
+    for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CLAUDE_SKILLS_DIR" "$skill"
       patch_skill_paths "$CLAUDE_SKILLS_DIR" "$skill"
     done
@@ -318,7 +400,7 @@ fi
 
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CODEX_SKILLS_DIR}?" yes; then
-    for skill in $SKILLS; do
+    for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CODEX_SKILLS_DIR" "$skill"
       patch_skill_paths "$CODEX_SKILLS_DIR" "$skill"
     done
@@ -328,6 +410,8 @@ if [ "$INSTALL_CODEX" -eq 1 ]; then
 fi
 
 info ""
-info "Installed skills: ${SKILLS}"
+info "Installed skills: ${SELECTED_SKILLS}"
+info ""
+print_agents_md_snippet
 info ""
 info "Done."

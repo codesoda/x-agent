@@ -36,6 +36,8 @@ sh install.sh
 ```
 
 Local installs use symlinks so edits to the repo are immediately reflected.
+The installer prompts for each x-agent skill so you can install only what you want.
+It also prints a short AGENTS.md/CLAUDE.md policy snippet you can copy/paste.
 
 ### Use directly (no install)
 
