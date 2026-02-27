@@ -1,6 +1,6 @@
 # x-agent
 
-Agent-friendly workflow runners for common dev toolchains. Designed to be called by AI coding agents (Claude Code, Codex, etc.) — super lightweight output on stdout, full logs in temp files when the model needs them.
+Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
 
 ## Why?
 
