@@ -316,7 +316,7 @@ print_agents_md_snippet() {
   echo "----- BEGIN AGENTS/CLAUDE SNIPPET -----"
   echo "## x-agent checks"
   echo ""
-  echo "Before completing work, run the relevant x-agent skill(s) for the stacks you changed:"
+  echo "Before completing work, run the relevant x-agent checks in dedicated sub-agents for the stacks you changed:"
 
   for skill in $SELECTED_SKILLS; do
     case "$skill" in
@@ -332,6 +332,7 @@ print_agents_md_snippet() {
     esac
   done
 
+  echo "- Launch stack-specific sub-agents to run these checks; do not skip them in the main agent."
   echo "- If a change touches multiple stacks, run all matching skills."
   if skill_selected "terra-agent"; then
     echo "- For Terraform formatting drift, run \`/terra-agent fmt-check\`; if it fails, run \`/terra-agent fmt-fix\` and then re-run checks."
