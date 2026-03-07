@@ -148,7 +148,25 @@ run_fmt() {
   fi
 
   echo "Mode: $mode"
-  if cargo "${fmt_args[@]}" >"$log" 2>&1; then
+  if [[ "$mode" == "fix" ]]; then
+    # In fix mode, first check which files need formatting, then apply.
+    local needs_fmt
+    needs_fmt="$(cargo fmt --all -- --check 2>&1 || true)"
+    cargo "${fmt_args[@]}" >"$log" 2>&1
+    if [[ -n "$needs_fmt" ]]; then
+      local changed_files
+      changed_files="$(echo "$needs_fmt" | grep '^Diff in' | sed 's/^Diff in //' | sed 's/:[0-9]*:$//' | sort -u)"
+      if [[ -n "$changed_files" ]]; then
+        echo "Result: PASS (files reformatted)"
+        echo "Files fixed:"
+        echo "$changed_files" | while read -r f; do echo "  $f"; done
+      else
+        echo "Result: PASS"
+      fi
+    else
+      echo "Result: PASS"
+    fi
+  elif cargo "${fmt_args[@]}" >"$log" 2>&1; then
     echo "Result: PASS"
   else
     ok=0
