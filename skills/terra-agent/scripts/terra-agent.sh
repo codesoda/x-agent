@@ -16,6 +16,7 @@ FMT_MODE="${FMT_MODE:-check}"          # check|fix
 FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
 TERRAFORM_CHDIR="${TERRAFORM_CHDIR:-${TF_CHDIR:-.}}"
+FAIL_FAST="${FAIL_FAST:-0}"           # set to 1 or use --fail-fast to stop after first failure
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/terra-agent.XXXXXX")"
@@ -37,6 +38,9 @@ need() {
 }
 
 hr() { echo "------------------------------------------------------------"; }
+
+# Returns 0 (continue) unless fail-fast is on and a step already failed.
+should_continue() { [[ "$FAIL_FAST" != "1" || "$overall_ok" == "1" ]]; }
 
 STEP_START_SECONDS=0
 
@@ -125,6 +129,11 @@ run_fmt() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  if [[ "$ok" == "0" && "$mode" == "check" ]]; then
+    echo "Fix: run /terra-agent fmt-fix to auto-format, then re-check: /terra-agent fmt-check"
+  elif [[ "$ok" == "0" ]]; then
+    echo "Fix: resolve the errors above, then re-run: /terra-agent fmt-fix"
+  fi
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -149,6 +158,7 @@ run_validate() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the validation errors above, then re-run: /terra-agent validate"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -191,6 +201,7 @@ run_init() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the init errors above, then re-run: /terra-agent init"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -268,6 +279,7 @@ run_plan_safe() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the errors above, then re-run: /terra-agent plan-safe"
   echo "Init log: $init_log"
   echo "Full log: $log"
   fmt_elapsed
@@ -312,6 +324,7 @@ run_lint() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the lint issues above, then re-run: /terra-agent lint"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -322,19 +335,23 @@ usage() {
 terra-agent: lean Terraform workflow output for coding agents
 
 Usage:
-  terra-agent                               # runs fmt(check), init(safe), validate, lint
-  terra-agent fmt                           # fmt in FMT_MODE
-  terra-agent fmt-check                     # report-only format check
-  terra-agent fmt-fix                       # auto-fix formatting
-  terra-agent init                          # safe non-mutating init
-  terra-agent plan-safe                     # safe non-mutating plan (passes on exit 0 or 2)
-  terra-agent validate                      # terraform validate
-  terra-agent lint                          # tflint (if installed)
-  terra-agent all                           # full suite (default)
+  terra-agent [--fail-fast]                   # runs fmt(check), init(safe), validate, lint
+  terra-agent [--fail-fast] fmt               # fmt in FMT_MODE
+  terra-agent fmt-check                       # report-only format check
+  terra-agent fmt-fix                         # auto-fix formatting
+  terra-agent init                            # safe non-mutating init
+  terra-agent plan-safe                       # safe non-mutating plan (passes on exit 0 or 2)
+  terra-agent validate                        # terraform validate
+  terra-agent lint                            # tflint (if installed)
+  terra-agent [--fail-fast] all               # full suite (default)
+
+Flags:
+  --fail-fast              stop after first failing step
 
 Env knobs:
   MAX_LINES=40                   # printed lines per step
   KEEP_DIR=0|1                   # keep temp log dir even on success
+  FAIL_FAST=0|1                  # same as --fail-fast flag
   TERRAFORM_CHDIR=.              # terraform root directory
   TF_CHDIR=.                     # alias for TERRAFORM_CHDIR
   RUN_FMT=0|1
@@ -348,6 +365,7 @@ Env knobs:
 
 Examples:
   terra-agent
+  terra-agent --fail-fast                         # full suite, stop on first failure
   TERRAFORM_CHDIR=infra terra-agent fmt-check
   TERRAFORM_CHDIR=infra terra-agent fmt-fix
   TERRAFORM_CHDIR=infra terra-agent init
@@ -359,6 +377,13 @@ EOF
 }
 
 main() {
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --fail-fast) FAIL_FAST=1; shift ;;
+      *) break ;;
+    esac
+  done
+
   local cmd="${1:-all}"
   shift 2>/dev/null || true
   local overall_ok=1
@@ -384,10 +409,10 @@ main() {
     lint)      run_lint || overall_ok=0 ;;
     all)
       if [[ "$RUN_FMT" == "1" ]]; then run_fmt "$FMT_MODE" || overall_ok=0; fi
-      if [[ "$RUN_INIT" == "1" ]]; then run_init || overall_ok=0; fi
-      if [[ "$RUN_VALIDATE" == "1" ]]; then run_validate || overall_ok=0; fi
-      if [[ "$RUN_LINT" == "1" ]]; then run_lint || overall_ok=0; fi
-      if [[ "$RUN_PLAN_SAFE" == "1" ]]; then run_plan_safe || overall_ok=0; fi
+      if [[ "$RUN_INIT" == "1" ]] && should_continue; then run_init || overall_ok=0; fi
+      if [[ "$RUN_VALIDATE" == "1" ]] && should_continue; then run_validate || overall_ok=0; fi
+      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
+      if [[ "$RUN_PLAN_SAFE" == "1" ]] && should_continue; then run_plan_safe || overall_ok=0; fi
       ;;
     *)
       echo "Unknown command: $cmd" >&2

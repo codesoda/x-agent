@@ -12,6 +12,7 @@ RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
 RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 RUN_BUILD="${RUN_BUILD:-1}"       # set to 0 to skip build
+FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/npm-agent.XXXXXX")"
@@ -28,6 +29,9 @@ cleanup() {
 trap cleanup EXIT
 
 hr() { echo "------------------------------------------------------------"; }
+
+# Returns 0 (continue) unless fail-fast is on and a step already failed.
+should_continue() { [[ "$FAIL_FAST" != "1" || "$overall_ok" == "1" ]]; }
 
 STEP_START_SECONDS=0
 
@@ -115,6 +119,7 @@ run_format() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the formatting issues, then re-run: /npm-agent format"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -159,6 +164,7 @@ run_lint() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the lint errors above, then re-run: /npm-agent lint"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -198,6 +204,7 @@ run_typecheck() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the type errors above, then re-run: /npm-agent typecheck"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -229,6 +236,7 @@ run_tests() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the failing tests, then re-run: /npm-agent test"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -259,6 +267,7 @@ run_build() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the build errors above, then re-run: /npm-agent build"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -269,12 +278,16 @@ usage() {
 npm-agent: lean Node.js workflow output for coding agents
 
 Usage:
-  npm-agent                            # runs format, lint, typecheck, test, build
-  npm-agent format|lint|typecheck|test|build|all
+  npm-agent [--fail-fast]              # runs format, lint, typecheck, test, build
+  npm-agent [--fail-fast] format|lint|typecheck|test|build|all
+
+Flags:
+  --fail-fast            stop after first failing step
 
 Env knobs:
   MAX_LINES=40           # printed lines per step
   KEEP_DIR=0|1           # keep temp log dir even on success
+  FAIL_FAST=0|1          # same as --fail-fast flag
   RUN_FORMAT=0|1
   RUN_LINT=0|1
   RUN_TYPECHECK=0|1
@@ -291,6 +304,7 @@ Auto-detection:
 
 Examples:
   npm-agent                            # full suite
+  npm-agent --fail-fast                # full suite, stop on first failure
   npm-agent lint                       # lint only
   npm-agent test                       # tests only
   RUN_BUILD=0 npm-agent                # skip build
@@ -299,6 +313,13 @@ EOF
 }
 
 main() {
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --fail-fast) FAIL_FAST=1; shift ;;
+      *) break ;;
+    esac
+  done
+
   local cmd="${1:-all}"
   shift 2>/dev/null || true
   local overall_ok=1
@@ -318,10 +339,10 @@ main() {
     build)     run_build     || overall_ok=0 ;;
     all)
       if [[ "$RUN_FORMAT" == "1" ]]; then run_format || overall_ok=0; fi
-      if [[ "$RUN_LINT" == "1" ]]; then run_lint || overall_ok=0; fi
-      if [[ "$RUN_TYPECHECK" == "1" ]]; then run_typecheck || overall_ok=0; fi
-      if [[ "$RUN_TESTS" == "1" ]]; then run_tests || overall_ok=0; fi
-      if [[ "$RUN_BUILD" == "1" ]]; then run_build || overall_ok=0; fi
+      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
+      if [[ "$RUN_TYPECHECK" == "1" ]] && should_continue; then run_typecheck || overall_ok=0; fi
+      if [[ "$RUN_TESTS" == "1" ]] && should_continue; then run_tests || overall_ok=0; fi
+      if [[ "$RUN_BUILD" == "1" ]] && should_continue; then run_build || overall_ok=0; fi
       ;;
     *)
       echo "Unknown command: $cmd" >&2

@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(MAX_LINES=* scripts/cargo-agent.sh*)
   - Bash(USE_NEXTEST=* scripts/cargo-agent.sh*)
   - Bash(KEEP_DIR=* scripts/cargo-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/cargo-agent.sh*)
 ---
 
 # Cargo Agent

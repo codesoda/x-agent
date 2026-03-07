@@ -11,6 +11,7 @@ allowed-tools:
   - Bash(RUN_*=* scripts/npm-agent.sh*)
   - Bash(MAX_LINES=* scripts/npm-agent.sh*)
   - Bash(KEEP_DIR=* scripts/npm-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/npm-agent.sh*)
 ---
 
 # NPM Agent

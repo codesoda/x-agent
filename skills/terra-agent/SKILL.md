@@ -11,6 +11,7 @@ allowed-tools:
   - Bash(RUN_*=* scripts/terra-agent.sh*)
   - Bash(MAX_LINES=* scripts/terra-agent.sh*)
   - Bash(KEEP_DIR=* scripts/terra-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/terra-agent.sh*)
   - Bash(FMT_MODE=* scripts/terra-agent.sh*)
   - Bash(TERRAFORM_CHDIR=* scripts/terra-agent.sh*)
   - Bash(TF_CHDIR=* scripts/terra-agent.sh*)

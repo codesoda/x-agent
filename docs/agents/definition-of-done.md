@@ -11,7 +11,10 @@ An agent is done only when all items below are complete.
 
 ## Behavior
 
-- Supports `KEEP_DIR`, `MAX_LINES`, and `RUN_<STEP>` toggles.
+- Supports `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, and `RUN_<STEP>` toggles.
+- Accepts `--fail-fast` CLI flag; when set, `all` stops after first failing step.
+- If a downstream tool has native fail-fast support, it is passed through.
+- Each `Result: FAIL` is followed by a `Fix:` line with the retest command (e.g. `/cargo-agent clippy`).
 - Missing optional tools are handled as `SKIP` with a clear reason.
 - Failures preserve logs and print truncated diagnostics.
 - Pass path exits `0`; failing path exits non-zero.
