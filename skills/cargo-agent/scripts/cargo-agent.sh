@@ -7,7 +7,12 @@ set -euo pipefail
 
 JQ_BIN="${JQ_BIN:-jq}"
 KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-MAX_LINES="${MAX_LINES:-40}"      # limit printed diagnostics lines per step
+# In CI, show full output; locally, limit to 40 lines to keep things tidy.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 RUN_CLIPPY="${RUN_CLIPPY:-1}"     # set to 0 to skip clippy
 RUN_FMT="${RUN_FMT:-1}"           # set to 0 to skip fmt
@@ -235,6 +240,23 @@ run_clippy() {
 
 run_sqlx_verify() {
   step "sqlx-cache"
+
+  # Skip if the project doesn't use sqlx.
+  if ! cargo metadata --no-deps --format-version=1 2>/dev/null \
+       | "$JQ_BIN" -e '.packages[].dependencies[] | select(.name=="sqlx")' >/dev/null 2>&1; then
+    echo "Result: SKIP (no sqlx dependency found)"
+    fmt_elapsed
+    return 0
+  fi
+
+  # sqlx dep found — cargo-sqlx is required to verify the cache.
+  if ! command -v cargo-sqlx >/dev/null 2>&1; then
+    echo "Result: FAIL"
+    echo "Fix: install sqlx-cli ('cargo install sqlx-cli'), then re-run: /cargo-agent sqlx"
+    fmt_elapsed
+    return 1
+  fi
+
   local log="$OUTDIR/sqlx.log"
   local status_before="$OUTDIR/sqlx.status.before"
   local status_after="$OUTDIR/sqlx.status.after"
@@ -342,7 +364,7 @@ Flags:
   --fail-fast            stop after first failing step; also passed to nextest
 
 Env knobs:
-  MAX_LINES=40           # printed lines per step
+  MAX_LINES=40           # printed lines per step (unlimited in CI)
   KEEP_DIR=0|1           # keep temp log dir even on success
   FAIL_FAST=0|1          # same as --fail-fast flag
   RUN_FMT=0|1

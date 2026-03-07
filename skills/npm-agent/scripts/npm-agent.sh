@@ -6,7 +6,12 @@ set -euo pipefail
 # optional: biome, eslint, prettier
 
 KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-MAX_LINES="${MAX_LINES:-40}"      # limit printed output lines per step
+# In CI, show full output; locally, limit to 40 lines to keep things tidy.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
 RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
 RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
 RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
@@ -285,7 +290,7 @@ Flags:
   --fail-fast            stop after first failing step
 
 Env knobs:
-  MAX_LINES=40           # printed lines per step
+  MAX_LINES=40           # printed lines per step (unlimited in CI)
   KEEP_DIR=0|1           # keep temp log dir even on success
   FAIL_FAST=0|1          # same as --fail-fast flag
   RUN_FORMAT=0|1
