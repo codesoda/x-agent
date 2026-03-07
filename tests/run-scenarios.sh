@@ -119,8 +119,8 @@ run_one() {
 
 run_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
-    print_status "SKIP" "shellcheck (not installed)"
-    return 0
+    print_status "FAIL" "shellcheck (not installed — brew install shellcheck)"
+    return 1
   fi
 
   local scripts=()
