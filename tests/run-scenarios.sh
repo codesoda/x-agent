@@ -117,6 +117,27 @@ run_one() {
   return 1
 }
 
+run_shellcheck() {
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    print_status "SKIP" "shellcheck (not installed)"
+    return 0
+  fi
+
+  local scripts=()
+  while IFS= read -r -d '' f; do
+    scripts+=("$f")
+  done < <(find "$ROOT_DIR/skills" -name '*.sh' -print0; find "$ROOT_DIR" -maxdepth 1 -name '*.sh' -print0; printf '%s\0' "$ROOT_DIR/tests/run-scenarios.sh")
+
+  if shellcheck --severity=warning "${scripts[@]}" >/dev/null 2>&1; then
+    print_status "PASS" "shellcheck"
+    return 0
+  fi
+
+  print_status "FAIL" "shellcheck"
+  shellcheck --severity=warning "${scripts[@]}" | sed 's/^/    /'
+  return 1
+}
+
 main() {
   local mode="${1:-run}"
   local filter=""
@@ -141,6 +162,14 @@ main() {
 
   local total=0
   local failed=0
+
+  # Run shellcheck if no filter or filter matches "shellcheck"
+  if [[ -z "$filter" || "shellcheck" == *"$filter"* ]]; then
+    total=$((total + 1))
+    if ! run_shellcheck; then
+      failed=$((failed + 1))
+    fi
+  fi
 
   while IFS= read -r scenario_file; do
     if [[ -n "$filter" && "$scenario_file" != *"$filter"* ]]; then
