@@ -6,7 +6,12 @@ set -euo pipefail
 # optional: tflint
 
 KEEP_DIR="${KEEP_DIR:-0}"              # set to 1 to keep temp dir even on success
-MAX_LINES="${MAX_LINES:-40}"           # limit printed output lines per step
+# In CI, show full output; locally, limit to 40 lines to keep things tidy.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
 RUN_FMT="${RUN_FMT:-1}"                # set to 0 to skip fmt
 RUN_INIT="${RUN_INIT:-1}"              # set to 0 to skip init
 RUN_VALIDATE="${RUN_VALIDATE:-1}"      # set to 0 to skip validate
@@ -16,6 +21,8 @@ FMT_MODE="${FMT_MODE:-check}"          # check|fix
 FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
 TERRAFORM_CHDIR="${TERRAFORM_CHDIR:-${TF_CHDIR:-.}}"
+FAIL_FAST="${FAIL_FAST:-0}"           # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"    # space-separated list; auto-sets TERRAFORM_CHDIR from .tf files
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/terra-agent.XXXXXX")"
@@ -38,6 +45,9 @@ need() {
 
 hr() { echo "------------------------------------------------------------"; }
 
+# Returns 0 (continue) unless fail-fast is on and a step already failed.
+should_continue() { [[ "$FAIL_FAST" != "1" || "$overall_ok" == "1" ]]; }
+
 STEP_START_SECONDS=0
 
 step() {
@@ -55,6 +65,37 @@ fmt_elapsed() {
 normalize_dir() {
   if [[ -z "$TERRAFORM_CHDIR" ]]; then
     TERRAFORM_CHDIR="."
+  fi
+}
+
+# If CHANGED_FILES is set and TERRAFORM_CHDIR was not explicitly provided,
+# auto-detect the terraform root from changed .tf files.
+resolve_changed_tf_dir() {
+  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+  # Only auto-detect when TERRAFORM_CHDIR is the default.
+  if [[ "$TERRAFORM_CHDIR" != "." ]]; then return; fi
+
+  local dirs=""
+  local f dir
+  for f in $CHANGED_FILES; do
+    case "$f" in
+      *.tf|*.tf.json)
+        dir="$(dirname "$f")"
+        if ! echo "$dirs" | grep -Fxq "$dir"; then
+          dirs="${dirs:+$dirs$'\n'}$dir"
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -z "$dirs" ]]; then return; fi
+  local count
+  count="$(echo "$dirs" | wc -l | tr -d ' ')"
+  if [[ "$count" == "1" ]]; then
+    TERRAFORM_CHDIR="$dirs"
+    echo "Auto-detected TERRAFORM_CHDIR=$TERRAFORM_CHDIR from changed files"
+  else
+    echo "Note: changed .tf files span multiple directories, running from ."
   fi
 }
 
@@ -125,6 +166,11 @@ run_fmt() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  if [[ "$ok" == "0" && "$mode" == "check" ]]; then
+    echo "Fix: run /terra-agent fmt-fix to auto-format, then re-check: /terra-agent fmt-check"
+  elif [[ "$ok" == "0" ]]; then
+    echo "Fix: resolve the errors above, then re-run: /terra-agent fmt-fix"
+  fi
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -149,6 +195,7 @@ run_validate() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the validation errors above, then re-run: /terra-agent validate"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -191,6 +238,7 @@ run_init() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the init errors above, then re-run: /terra-agent init"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -268,6 +316,7 @@ run_plan_safe() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the errors above, then re-run: /terra-agent plan-safe"
   echo "Init log: $init_log"
   echo "Full log: $log"
   fmt_elapsed
@@ -312,6 +361,7 @@ run_lint() {
 
   echo
   echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the lint issues above, then re-run: /terra-agent lint"
   echo "Full log: $log"
   fmt_elapsed
   [[ "$ok" == "1" ]]
@@ -322,19 +372,23 @@ usage() {
 terra-agent: lean Terraform workflow output for coding agents
 
 Usage:
-  terra-agent                               # runs fmt(check), init(safe), validate, lint
-  terra-agent fmt                           # fmt in FMT_MODE
-  terra-agent fmt-check                     # report-only format check
-  terra-agent fmt-fix                       # auto-fix formatting
-  terra-agent init                          # safe non-mutating init
-  terra-agent plan-safe                     # safe non-mutating plan (passes on exit 0 or 2)
-  terra-agent validate                      # terraform validate
-  terra-agent lint                          # tflint (if installed)
-  terra-agent all                           # full suite (default)
+  terra-agent [--fail-fast]                   # runs fmt(check), init(safe), validate, lint
+  terra-agent [--fail-fast] fmt               # fmt in FMT_MODE
+  terra-agent fmt-check                       # report-only format check
+  terra-agent fmt-fix                         # auto-fix formatting
+  terra-agent init                            # safe non-mutating init
+  terra-agent plan-safe                       # safe non-mutating plan (passes on exit 0 or 2)
+  terra-agent validate                        # terraform validate
+  terra-agent lint                            # tflint (if installed)
+  terra-agent [--fail-fast] all               # full suite (default)
+
+Flags:
+  --fail-fast              stop after first failing step
 
 Env knobs:
-  MAX_LINES=40                   # printed lines per step
+  MAX_LINES=40                   # printed lines per step (unlimited in CI)
   KEEP_DIR=0|1                   # keep temp log dir even on success
+  FAIL_FAST=0|1                  # same as --fail-fast flag
   TERRAFORM_CHDIR=.              # terraform root directory
   TF_CHDIR=.                     # alias for TERRAFORM_CHDIR
   RUN_FMT=0|1
@@ -345,9 +399,11 @@ Env knobs:
   FMT_MODE=check|fix             # default: check
   FMT_RECURSIVE=0|1              # default: 1
   TFLINT_RECURSIVE=0|1           # default: 1
+  CHANGED_FILES="f1 f2"          # auto-set TERRAFORM_CHDIR from changed .tf files
 
 Examples:
   terra-agent
+  terra-agent --fail-fast                         # full suite, stop on first failure
   TERRAFORM_CHDIR=infra terra-agent fmt-check
   TERRAFORM_CHDIR=infra terra-agent fmt-fix
   TERRAFORM_CHDIR=infra terra-agent init
@@ -359,6 +415,13 @@ EOF
 }
 
 main() {
+  while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+      --fail-fast) FAIL_FAST=1; shift ;;
+      *) break ;;
+    esac
+  done
+
   local cmd="${1:-all}"
   shift 2>/dev/null || true
   local overall_ok=1
@@ -372,6 +435,7 @@ main() {
 
   need terraform
   normalize_dir
+  resolve_changed_tf_dir
   ensure_terraform_project
 
   case "$cmd" in
@@ -383,11 +447,11 @@ main() {
     validate)  run_validate || overall_ok=0 ;;
     lint)      run_lint || overall_ok=0 ;;
     all)
-      if [[ "$RUN_FMT" == "1" ]]; then run_fmt "$FMT_MODE" || overall_ok=0; fi
-      if [[ "$RUN_INIT" == "1" ]]; then run_init || overall_ok=0; fi
-      if [[ "$RUN_VALIDATE" == "1" ]]; then run_validate || overall_ok=0; fi
-      if [[ "$RUN_LINT" == "1" ]]; then run_lint || overall_ok=0; fi
-      if [[ "$RUN_PLAN_SAFE" == "1" ]]; then run_plan_safe || overall_ok=0; fi
+      if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt "$FMT_MODE" || overall_ok=0; fi
+      if [[ "$RUN_INIT" == "1" ]] && should_continue; then run_init || overall_ok=0; fi
+      if [[ "$RUN_VALIDATE" == "1" ]] && should_continue; then run_validate || overall_ok=0; fi
+      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
+      if [[ "$RUN_PLAN_SAFE" == "1" ]] && should_continue; then run_plan_safe || overall_ok=0; fi
       ;;
     *)
       echo "Unknown command: $cmd" >&2

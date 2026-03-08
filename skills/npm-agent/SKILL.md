@@ -11,6 +11,8 @@ allowed-tools:
   - Bash(RUN_*=* scripts/npm-agent.sh*)
   - Bash(MAX_LINES=* scripts/npm-agent.sh*)
   - Bash(KEEP_DIR=* scripts/npm-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/npm-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/npm-agent.sh*)
 ---
 
 # NPM Agent
@@ -49,7 +51,9 @@ scripts/npm-agent.sh all          # full suite (default)
 | `RUN_TYPECHECK` | `1` | Set to `0` to skip typecheck |
 | `RUN_TESTS` | `1` | Set to `0` to skip tests |
 | `RUN_BUILD` | `1` | Set to `0` to skip build |
-| `MAX_LINES` | `40` | Max output lines printed per step |
+| `FAIL_FAST` | `0` | Set to `1` to stop after first failure (or use `--fail-fast`) |
+| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes lint/format to those files |
+| `MAX_LINES` | `40` | Max output lines printed per step (unlimited in CI) |
 | `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
 
 ## Auto-Detection
@@ -74,3 +78,5 @@ scripts/npm-agent.sh all          # full suite (default)
 - The script must be run from within a Node.js project directory (requires `package.json`)
 - Steps are skipped gracefully if no matching tool/script is found
 - On failure, the temp log directory is preserved automatically for inspection
+- `CHANGED_FILES` scopes biome/eslint/prettier fallback paths to only the listed files (package.json scripts always run project-wide)
+- In CI (`CI=true`), `MAX_LINES` defaults to unlimited; locally it defaults to 40
