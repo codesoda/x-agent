@@ -3,9 +3,9 @@
 ## Key Files & Roles
 
 - `lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
-- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
-- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
-- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
+- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner with the heaviest business logic; contains run_x step handlers plus shared boilerplate currently inline.
+- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner with package-manager detection and file-scoping logic for lint/format.
+- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner with safe init/plan behavior and optional tflint checks.
 - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
 - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
 - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.

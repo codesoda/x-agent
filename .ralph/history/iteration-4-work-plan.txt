@@ -1,17 +1,17 @@
 ## Implementation Checklist
-- [x] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
-- [x] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
-- [x] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
-- [x] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
-- [x] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
-- [x] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
-- [x] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
-- [x] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
-- [x] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
-- [x] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
-- [x] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
-- [x] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
+- [ ] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
+- [ ] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
+- [ ] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
+- [ ] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
+- [ ] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
+- [ ] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
+- [ ] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
+- [ ] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
+- [ ] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
+- [ ] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
+- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 

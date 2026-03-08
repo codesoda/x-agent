@@ -1,74 +1,56 @@
-# Work Summary — Spec 01: Extract Shared Library
+# Work Summary — Spec 02: Refactor Existing Agents to Use Shared Library
 
 ## What was implemented
 
-Created `lib/x-agent-common.sh` containing all shared boilerplate extracted from existing agents:
+Refactored all three existing agents (cargo-agent, npm-agent, terra-agent) to source `lib/x-agent-common.sh` instead of duplicating boilerplate.
 
-### Environment defaults
-- `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` with sensible defaults
-- CI-aware `MAX_LINES` (999999 in CI, 40 locally) with explicit override support
+### For each agent:
+1. Added `SCRIPT_DIR`/`LIB_DIR` resolution and `source` line after `set -euo pipefail`
+2. Removed duplicated boilerplate: `KEEP_DIR`, `MAX_LINES` (CI-aware block), `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `OUTDIR` mktemp, `cleanup()` + trap, `need()`, `hr()`, `should_continue()`, `STEP_START_SECONDS`, `step()`, `fmt_elapsed()`
+3. Replaced inline setup with `setup_outdir "<agent-name>"` calls
+4. Replaced inline final summary block with `print_overall "$overall_ok"`
 
-### Helper functions
-- `hr()` — separator line
-- `step(name)` — step header with timing
-- `fmt_elapsed()` — elapsed time for current step
-- `should_continue()` — fail-fast guard (requires caller `overall_ok`)
-- `need(tool)` — required tool check, exits 2 if missing
-
-### Setup helpers (not auto-executed)
-- `setup_outdir(agent-name)` — creates temp dir, sets OUTDIR, installs cleanup trap
-- `setup_lock(agent-name)` — workflow lock with flock + perl fallback
-
-### Result formatting
-- `print_result(ok, log_path, fix_hint)` — prints Result: PASS|FAIL with optional Fix: hint
-- `print_overall(overall_ok)` — prints Overall: PASS|FAIL with Logs: path
-
-### install.sh updates
-- Remote installs now fetch `lib/x-agent-common.sh` from the repo
-- `install_lib_to_root()` function installs lib/ directory (symlink for local, copy for remote)
-- Called before skill installation in both Claude and Codex install paths
-
-### run-scenarios.sh updates
-- Shellcheck scope expanded to include `lib/` directory
+### Agent-specific details:
+- **cargo-agent**: Also removed inline lock block (flock + perl fallback), replaced with `setup_lock "cargo-agent"`
+- **npm-agent**: No lock block existed; kept `detect_pm()`, `_CHANGED_SRC_FILES` filtering, and all `run_script()` helpers. Added `shellcheck disable=SC2034` for `FAIL_FAST` assignment in `--fail-fast` handler (used by `should_continue()` in shared lib)
+- **terra-agent**: No lock block existed; kept `normalize_dir()`, `resolve_changed_tf_dir()`, `tf()`, `ensure_terraform_project()`, `normalize_fmt_mode()`. `TF_DATA_DIR_PATH` set after `setup_outdir` to ensure `OUTDIR` is available. Added `shellcheck disable=SC2034` for `FAIL_FAST` assignment
 
 ## Deviations from work plan
 
-None. All implementation followed the plan exactly.
+- npm-agent and terra-agent did not need `setup_lock` — they never had lock blocks. Only cargo-agent had workflow locking.
+- Added `shellcheck disable=SC2034` directives for `FAIL_FAST` in npm-agent and terra-agent since shellcheck can't see cross-file usage via sourced library.
 
 ## Edge cases handled
-- Sourcing produces zero output and no side effects (verified)
-- `need()` exits with code 2 for missing tools (verified)
-- `setup_outdir` cleanup preserves logs on failure or `KEEP_DIR=1` (verified)
-- `setup_outdir` removes temp dir on success with `KEEP_DIR=0` (verified)
-- CI MAX_LINES=999999 with `CI=true` and `CI=1` (verified)
-- Local MAX_LINES=40 when CI unset (verified)
-- Explicit `MAX_LINES` override takes precedence (verified)
-- Lock fallback: flock -> perl -> warning (implemented)
-- All Bash 3.2 compatible (no associative arrays, no readarray, no `|&`)
+- `FAIL_FAST` shellcheck warning: suppressed with SC2034 directive and comment explaining cross-file usage
+- terra-agent `TF_DATA_DIR_PATH` depends on `OUTDIR`: placed after `setup_outdir` call
+- Agent-specific `RUN_*` variables kept in each agent (not moved to shared lib)
+- `SQLX_OFFLINE` export kept in cargo-agent
+- `JQ_BIN` kept in cargo-agent
+- `detect_pm` and top-level PM echo kept in npm-agent (runs at load time, before main)
+
+## Line count reduction
+- cargo-agent: 658 → 593 (-65 lines, -10%)
+- npm-agent: 390 → 354 (-36 lines, -9%)
+- terra-agent: 469 → 429 (-40 lines, -9%)
+- Total: 1517 → 1376 (-141 lines removed)
 
 ## Tests written/run
-- Shellcheck passes on `lib/x-agent-common.sh`
-- Source side-effect test: no stdout/stderr on source
-- Function availability: all 9 functions callable after sourcing
-- `need()` exit code: returns 2 for missing tool, passes for existing tool
-- `setup_outdir` cleanup: dir removed on success, preserved on failure, preserved with KEEP_DIR=1
-- `print_result` output format: PASS/FAIL with correct fields
-- `print_overall` output format: Overall PASS/FAIL with Logs: path
-- All 10 existing scenarios pass (shellcheck + 9 agent fixtures)
+- Baseline: all 12 scenarios passed before refactoring
+- After refactor: all 12 scenarios pass (identical results)
+- `shellcheck --severity=warning` passes on all three scripts
+- Shellcheck suite in `tests/run-scenarios.sh` also passes (includes lib/)
 
 ## Known limitations
-- Existing agents are NOT refactored to use the shared library yet (deferred to spec 02)
-- `run-scenarios.sh` tests don't exercise `lib/x-agent-common.sh` directly; coverage comes from manual smoke tests and future agent adoption
+- `print_result` from shared lib is not adopted by any agent in this spec — agents retain their inline Result/Fix printing patterns because each has unique formatting (cargo's JSON diagnostics, terra's init+plan dual logs, etc.). This is intentional to preserve output parity.
+- Path coupling (`../../../lib`) remains as designed for this phase.
 
 ## Exploration notes
-Updated `.ralph/exploration.md`:
-- Added `lib/x-agent-common.sh` to Key Files & Roles
-- Updated install flow description to reflect lib/ handling
+Updated `.ralph/exploration.md`: changed descriptions for all three agent scripts to note they now source `lib/x-agent-common.sh` instead of containing inline boilerplate.
 
 ## Lessons Applied This Phase
-No prior lessons existed. No new lessons required — implementation was straightforward.
+No prior lessons existed for this project. No new lessons required — refactoring was straightforward with clear patterns.
 
 ## Suggestions for the REVIEW agent
-- Verify the library API matches what spec 02 will need for refactoring existing agents
-- The `print_result` function signature differs slightly from existing inline patterns (agents currently inline the Result/Fix/log printing); spec 02 should decide whether to adopt `print_result` fully or keep inline patterns for agent-specific formatting (e.g., cargo-agent's JSON diagnostics output)
-- The lock pattern in `setup_lock` matches cargo-agent's existing implementation exactly
+- Verify that the `help` command still works without project context for all three agents
+- The `print_result` function from shared lib remains unused by existing agents — future new agents should adopt it for cleaner step result formatting
+- Lock behavior is only used by cargo-agent; npm-agent and terra-agent don't need locks as they don't have heavy concurrent build semantics
