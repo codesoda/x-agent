@@ -21,7 +21,7 @@
 - `/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/`: valid manifest with kubeval fallback via PATH wrapper (EXPECT_EXIT=0, REQUIRED_TOOLS=kubeval).
 - `/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/`: invalid manifest with kubeval fallback via PATH wrapper (EXPECT_EXIT=1, REQUIRED_TOOLS=kubeval).
 - `/Users/chrisraethke/projects/x-agent/tests/kube-agent/schema-dir/`: KUBE_SCHEMAS_DIR passthrough smoke test (EXPECT_EXIT=0, REQUIRED_TOOLS=kubeconform).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh`: wrapper that hides kubeconform from PATH using shadow directories (preserves co-located kubeval) for kubeval fallback testing.
+- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh`: wrapper that removes kubeconform from PATH for kubeval fallback testing.
 - `/Users/chrisraethke/projects/x-agent/install.sh`: skill registry, dependency checks, and AGENTS/CLAUDE snippet generation.
 - `/Users/chrisraethke/projects/x-agent/README.md`: published agent inventory and usage examples.
 - `/Users/chrisraethke/projects/x-agent/.ralph/specs/07-kube-agent.md`: specification and explicit FR mapping.
@@ -32,7 +32,6 @@
 - Required dependencies fail with exit code `2` using `need` or custom logic that prints explicit install guidance.
 - Output contract remains strict: each step prints `Step`, `Result`, optional `Fix` for failures, `Time`, and final `Overall` and `Logs`.
 - `CHANGED_FILES` is optional and used only where meaningful; if non-empty, logic narrows execution targets.
-- `KUBE_IGNORE_MISSING_SCHEMAS=1` enables offline-safe validation by skipping resources whose schemas can't be fetched; all kube-agent test fixtures use this knob for network independence.
 - Scenario contract (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, optional `REQUIRED_TOOLS`) is standardized in `tests/run-scenarios.sh`.
 - `shellcheck --severity=warning` runs across `skills/*`, `lib/*`, and test shell scripts before scenario execution.
 

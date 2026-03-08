@@ -1,0 +1,36 @@
+DECISION: REWORK
+ITERATION: 1
+SPEC: 07-kube-agent.md
+
+SUMMARY:
+The prior blocking findings (R-001 through R-003) are fixed: kubeconform now runs with `-summary -output json`, parse helper exists, scoped fixtures were added, and eval-based invocation was removed.
+Remaining work is limited to coverage depth: fallback-path validation and some edge assertions are still unverified by scenario tests.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+- [R-006] `tests/kube-agent/issues` and `tests/kube-agent/scoped-match` rely on `kubeconform`; there is still no scenario that exercises the `kubeval` fallback branch (`REQUIRED_TOOLS="kubeval"`), so FR-6’s fallback behavior is unproven in CI.
+  - `skills/kube-agent/scripts/kube-agent.sh:47-58,147-165`
+
+MINOR ISSUES:
+- `parse_kubeconform_summary()` only emits counts for kubeconform; kubeval failures print only the generic `Result/Fix` text with no valid/invalid count summary (`skills/kube-agent/scripts/kube-agent.sh:173-174,157-165`).
+- Scenario suite lacks explicit assertion coverage that `KUBE_SCHEMAS_DIR` is passed through to the invoked command for both tools (`skills/kube-agent/scripts/kube-agent.sh:149-151,159-160`, `tests/kube-agent/*.scenario.env`).
+- In this environment, `tests/run-scenarios.sh kube-agent` fails for clean/scoped-match when `kubeconform` cannot fetch schemas from default remote location (network-dependent behavior), so the same fixture outcome is unstable offline.
+
+NEXT STEPS:
+Return to WORK phase with same plan to fix issues
+
+---
+FEEDBACK FOR NEXT PHASE:
+
+Priority fixes:
+1. [R-006] Add a `tests/kube-agent` fixture with `REQUIRED_TOOLS="kubeval"` and no kubeconform on PATH so the fallback branch is automatically exercised end-to-end.
+
+Edge cases to handle:
+1. [R-007] Add a dedicated fallback path assertion when `kubeconform` is missing but kubeval is present, confirming expected validator selection and same success/fail semantics.
+2. [R-008] Add a deterministic schema fixture (local schemas directory via `KUBE_SCHEMAS_DIR`) for clean scenario to avoid failures when network is unavailable.
+
+Test gaps:
+1. [R-009] Add fixture-level assertions (or log checks) for `-schema-location` / `--schema-location` to verify `KUBE_SCHEMAS_DIR` is used in both branches.
+2. [R-010] Add kubeval success and failure scenarios that check result structure and fix-hint rendering.

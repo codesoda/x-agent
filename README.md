@@ -20,6 +20,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 | `gha-agent` | GitHub Actions | lint (actionlint) |
 | `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
 | `helm-agent` | Helm | lint, template |
+| `kube-agent` | Kubernetes | validate (kubeconform/kubeval) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
@@ -64,6 +65,9 @@ path/to/x-agent/skills/go-agent/scripts/go-agent.sh
 
 # Helm project
 path/to/x-agent/skills/helm-agent/scripts/helm-agent.sh
+
+# Kubernetes project
+path/to/x-agent/skills/kube-agent/scripts/kube-agent.sh
 
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
@@ -121,6 +125,16 @@ CHART_DIR=charts/myapp helm-agent.sh all  # explicit chart directory
 ```
 
 `helm-agent` auto-detects chart directories by searching for `Chart.yaml`. Use `CHART_DIR` to override. Reports SKIP when no charts are found.
+
+### kube-agent
+
+```sh
+kube-agent.sh              # full suite: validate
+kube-agent.sh validate     # validate manifests only
+KUBE_SCHEMAS_DIR=path kube-agent.sh all  # custom schema location
+```
+
+`kube-agent` auto-detects kubeconform or kubeval and validates all `.yaml`/`.yml` files containing Kubernetes resource definitions (`apiVersion:` + `kind:`). Use `KUBE_SCHEMAS_DIR` for custom schemas. Reports SKIP when no manifests are found.
 
 ### npm-agent
 
@@ -211,6 +225,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 - `/gha-agent` — run GitHub Actions workflow linting
 - `/go-agent` — run Go checks
 - `/helm-agent` — run Helm chart checks
+- `/kube-agent` — run Kubernetes manifest validation
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks
 - `/terra-agent` — run Terraform checks/fixes

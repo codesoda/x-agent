@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="bash-agent cargo-agent gha-agent go-agent helm-agent npm-agent py-agent terra-agent"
+SKILLS="bash-agent cargo-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -316,6 +316,17 @@ check_optional_deps() {
     fi
   fi
 
+  if skill_selected "kube-agent"; then
+    if command -v kubeconform >/dev/null 2>&1; then
+      info "  Found: kubeconform"
+    elif command -v kubeval >/dev/null 2>&1; then
+      info "  Found: kubeval"
+    else
+      warn "  Missing: kubeconform or kubeval (needed by kube-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "go-agent"; then
     if command -v go >/dev/null 2>&1; then
       info "  Found: go"
@@ -413,6 +424,9 @@ print_agents_md_snippet() {
         ;;
       helm-agent)
         echo "- Helm: use \`/helm-agent\` (lint/template)."
+        ;;
+      kube-agent)
+        echo "- Kubernetes: use \`/kube-agent\` (validate manifests)."
         ;;
       go-agent)
         echo "- Go: use \`/go-agent\` (fmt/vet/staticcheck/test)."

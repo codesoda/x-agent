@@ -99,3 +99,70 @@
   - Report explicit, actionable line references when ordering is incorrect.
 
 **Status**: PENDING
+
+## [2026-03-08T18:45:00Z] kube-scope-skip-fixture-coverage
+
+**Frequency**: Each new scoped agent where clean/issues fixtures do not hit no-match or skip branches
+
+**Priority**: HIGH
+
+**Current Issue**: discovery-based agents with `CHANGED_FILES` can regress in scoped and no-manifest branches while still passing clean/issues fixtures because `run-scenarios` only checks exit codes by default.
+
+**Manual Check**: Add dedicated fixtures with only `CHANGED_FILES` non-matches (expect SKIP) and no-manifest directories (expect SKIP) before implementing additional validator logic.
+
+**Automated Check**: Add a plan-time validation rule that parses agent specs for `CHANGED_FILES` and verifies corresponding `tests/<agent>/` includes skip/scoped scenarios beyond base `clean` and `issues`.
+
+**Status**: PENDING
+
+
+## [2026-03-08T17:56:51Z] review-kube-changed-files-assumption
+
+**Frequency**: Repeated assumption in early implementations
+
+**Priority**: MEDIUM
+
+**Current Issue**: Scoped-path behavior is sometimes treated as untestable despite `tests/run-scenarios.sh` supporting `CHANGED_FILES` through `scenario.env`, which leaves FR-3 behavior under-covered.
+
+**Manual Check**: Confirm whether scoped behavior assertions are covered in dedicated fixtures before approving implementations that rely on `CHANGED_FILES` scoping.
+
+**Automated Check**: Add a review-time rule that checks for at least one fixture in `tests/<agent>/` that sets `CHANGED_FILES` when the agent spec includes scoped execution requirements.
+
+**Status**: PENDING
+
+## [2026-03-09T12:00:00Z] scenario-env-export-check
+
+**Frequency**: First occurrence (kube-agent scoped scenarios)
+**Priority**: HIGH
+**Current Issue**: scenario.env sets env vars that agent scripts need, but without `export` they don't reach the subprocess. Tests silently pass with wrong behavior.
+**Manual Check**: Review scenario.env files for variables the agent reads (CHANGED_FILES, etc.) and ensure they are exported.
+**Automated Check**:
+  - Pre-test validation: grep for known agent-consumed env vars (CHANGED_FILES, KUBE_SCHEMAS_DIR, etc.) in scenario.env files
+  - If found without `export` prefix, warn: "Variable X in scenario.env won't reach agent subprocess. Add 'export' prefix."
+**Status**: PENDING
+
+## [2026-03-08T18:08:07Z] review-kube-agent-kubeval-coverage
+
+**Frequency**: Repeated in validator-pluggable agents without branch-specific fixtures
+**Priority**: HIGH
+**Current Issue**: fallback validator branches (e.g., kubeval) are often untested because suites default to primary tool (`kubeconform`/`actionlint` equivalent) and lack explicit availability toggles.
+**Manual Check**: Add fixture(s) that exclude the primary validator and set `REQUIRED_TOOLS` to secondary tool.
+**Automated Check**: In review, verify when a spec includes fallback tooling that the corresponding test matrix includes at least one fixture forcing the fallback branch.
+**Status**: PENDING
+
+## [2026-03-08T18:15:31Z] enforce-scoped-fixture-coverage
+
+**Frequency**: First occurrence
+**Priority**: HIGH
+**Current Issue**: Agents using `CHANGED_FILES` can pass clean/issues fixtures while skipping wrong scope changes.
+**Manual Check**: Require at least one positive-match and one no-match `CHANGED_FILES` fixture per such agent.
+**Automated Check**: Add scenario fixture lint rule in `tests/run-scenarios.sh`/review validation to assert presence of a scoped-match and scoped-no-match fixture when agent script references `CHANGED_FILES`.
+**Status**: PENDING
+
+## [2026-03-08T18:22:40Z] scenario-env-exports
+
+**Frequency**: Repeated across scope-aware agents in scenario-based harness
+**Priority**: MEDIUM
+**Current Issue**: Agent fixtures can set variables like CHANGED_FILES or schema knobs without `export`, so subprocess-invoked agents never read them, weakening scoped/optional behavior assertions.
+**Manual Check**: Inspect each agent fixture `scenario.env` for variables read by the agent and verify they are exported when required by harness subprocess execution.
+**Automated Check**: Add a lint/preflight that parses `scenario.env` files for known agent env vars (for example CHANGED_FILES, KUBE_SCHEMAS_DIR, KUBE_IGNORE_MISSING_SCHEMAS) and warns when set without `export`.
+**Status**: PENDING

@@ -1,216 +1,327 @@
 ## Implementation Checklist
-- [ ] 1. Verify spec acceptance scope and reuse constraints from `.ralph/task.md` and `.ralph/specs/07-kube-agent.md` before writing any kube-agent artifacts.
-- [ ] 2. Reconfirm repository conventions from `AGENTS.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md` for script, SKILL.md, and scenario structure.
-- [ ] 3. Implement `skills/kube-agent/scripts/kube-agent.sh` with shared library sourcing (`lib/x-agent-common.sh`) and baseline CLI scaffolding.
-- [ ] 4. Implement validator selection logic with kubeconform preference and kubeval fallback, with explicit exit-2 error path when neither is available.
-- [ ] 5. Implement manifest discovery and file filtering, including `.yml/.yaml` recursion with ignores, `apiVersion` + `kind` content filtering, and `CHANGED_FILES` scoping.
-- [ ] 6. Implement `validate` step execution path for kubeconform and kubeval, `KUBE_SCHEMAS_DIR` passthrough, and structured output including valid/invalid counts where possible.
-- [ ] 7. Implement command dispatch for `validate`, `all`, and structured failure handling via `should_continue` and `print_result` + `print_overall`.
-- [ ] 8. Implement help/usage path that works without project checks and add `--fail-fast` behavior only on the `all` path.
-- [ ] 9. Add `skills/kube-agent/SKILL.md` with trigger language and complete `allowed-tools` (universal knobs, `RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`).
-- [ ] 10. Add minimal scenario fixtures for `tests/kube-agent/clean/` and `tests/kube-agent/issues/` with explicit `EXPECTED_EXIT` and required tools.
-- [ ] 11. Add targeted scenario fixtures for FR-3 and skip semantics (CHANGED_FILES scope and no-manifest fallback) to prevent scope regressions in this agent family.
-- [ ] 12. Update `install.sh` for `kube-agent` registration in `SKILLS`, optional dependency checks, and AGENTS/CLAUDE snippet output.
-- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Confirm scope and dependencies by reading `.ralph/task.md`, `.ralph/specs/07-kube-agent.md`, `AGENTS.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md`.
+- [ ] 2. Finalize the component map for spec 07, including `lib/x-agent-common.sh`, `skills/kube-agent/scripts/kube-agent.sh`, `skills/kube-agent/SKILL.md`, `tests/kube-agent/`, `install.sh`, and `README.md`.
+- [ ] 3. Create `skills/kube-agent/scripts/kube-agent.sh` scaffold with Bash 3.2-safe header, strict mode, comment block, shared lib import (`lib/x-agent-common.sh`), and canonical knobs.
+- [ ] 4. Add a reusable manifest-discovery helper that recursively finds `.yml`/`.yaml` while pruning `.github/`, `node_modules/`, `.git/`, and `charts/`.
+- [ ] 5. Implement dual-validator resolver with strict ordering (`kubeconform` preferred, `kubeval` fallback) and explicit exit-2 failure with install guidance when neither exists.
+- [ ] 6. Implement `RUN_VALIDATE` step with explicit file-listing and `CHANGED_FILES` scoping semantics.
+- [ ] 7. Filter discovered YAML candidates by content (`apiVersion:` and `kind:` both present) before validation and count final candidate set.
+- [ ] 8. Execute kubeconform and kubeval commands with shared output capture, `KUBE_SCHEMAS_DIR` passthrough, and resilient CLI invocation mode for both tools.
+- [ ] 9. Build result reporting for pass/fail/skip with explicit `Fix: resolve schema validation errors above, then re-run: /kube-agent validate` and `Overall` summary, using shared helpers from `lib/x-agent-common.sh`.
+- [ ] 10. Implement command dispatch for `validate` and `all`, parse `--fail-fast`, parse `help`/`-h`/`--help` before dependency checks, and enforce `FAIL_FAST` across `all`.
+- [ ] 11. Add `skills/kube-agent/SKILL.md` with the required triggers, environment knobs, and allowed-tools (`RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs, `CHANGED_FILES`).
+- [ ] 12. Add `tests/kube-agent/clean/` and `tests/kube-agent/issues/` scenarios with required tool gating and manifest fixtures.
+- [ ] 13. Add focused kube-agent edge scenarios for `CHANGED_FILES` scoping and explicit no-manifest skip behavior.
+- [ ] 14. Update `install.sh` to include `kube-agent` in selectable skills, optional dependency checks for `kubeconform`/`kubeval`, and AGENTS/CLAUDE snippet text.
+- [ ] 15. Update `README.md` agent inventory and usage examples to include `kube-agent`.
+- [ ] 16. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 17. All acceptance criteria pass -- run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 
-### Component Boundaries
-`kube-agent.sh` is a thin command layer over external validators. It owns CLI parsing, discovery, scope handling, and result formatting. `lib/x-agent-common.sh` supplies cross-agent primitives for output, defaults, cleanup, and locking. Tests, installer metadata, and documentation are separate cross-cutting layers with no circular dependency.
+### System Design and Component Boundaries
+The kube-agent is a command-wrapper service that follows the existing x-agent composition pattern: one domain script for orchestration, one SKILL contract, one scenario suite, and two repository metadata touchpoints (`install.sh`, `README.md`). Runtime responsibilities stay in `skills/kube-agent/scripts/kube-agent.sh`; shared runtime behavior remains in `lib/x-agent-common.sh`.
+
+The domain script owns:
+1) CLI parsing for `validate` and `all`,
+2) external tool detection and selection,
+3) manifest discovery and scope resolution,
+4) one validation execution path with unified logging, and
+5) output contract rendering.
+
+Shared dependencies stay outside domain logic, including output helpers, temp dir lifecycle, lock handling, and fail-fast gating.
 
 ### Dependency Graph and Coupling
-Runtime dependencies are limited to one of `kubeconform` or `kubeval`; all other behavior is local Bash. The installer and README depend on deterministic skill naming. Scenario tests depend only on agent output contract and fixture layout, not on shared validation internals.
+The execution critical path is local-first and file-driven. `kube-agent` depends on one of `kubeconform` or `kubeval`. It also depends on repository files and environment knobs. Coupling points:
+1) Path conventions (`SCRIPT_DIR/../../../lib`, `OUTDIR`, `TMPDIR_ROOT`) inherited from existing agent scripts.
+2) Scenario runner expectations (`skills/.../scripts/...sh`, scenario env variables, exit-code contract).
+3) Installer and metadata coupling in `install.sh` and `README.md` for discoverability.
+4) `lib/x-agent-common.sh` for shared behavior and clean process semantics.
 
-### Data Flow
-Input enters via environment variables and CLI args. Discovery resolves candidate files from current working directory or `CHANGED_FILES` projection. Validation runs against those candidates using the selected tool and emits per-step result artifacts into `OUTDIR` plus structured terminal status. State flow remains small and linear: parse → discover → validate → report.
+### Data Flow and Failure Paths
+Input enters via env vars (`CHANGED_FILES`, `RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs) and command args. After `--help` handling and tool resolution, `kube-agent` resolves a deterministic manifest set, then runs one validation step.
 
-### Scaling Characteristics
-Primary load is filesystem traversal. For large repos, recursive `find` dominates runtime and can be expensive if not pruned. Command invocation is linear in discovered file count. Validator runtime scales with file count and manifest complexity and is external-tool bound.
+Data flow details:
+1) `main` parses help/flags/command.
+2) `main` creates `OUTDIR` and (optionally) lock.
+3) discoverer collects candidate YAML files.
+4) scope filter applies `CHANGED_FILES` when present.
+5) manifest filter applies `apiVersion:` and `kind:` checks.
+6) validation command runs on collected files.
+7) `print_result` and `print_overall` produce structured summary.
 
-### Single Points of Failure
-Validator availability is the clearest hard stop (`kubeconform` or `kubeval` absent). Discovery correctness is second-order: inaccurate exclusions can cause false pass/skip. `FULL LOG` preservation and deterministic exit codes are the recovery path for unknown behavior.
+### Scaling Characteristics and Bottlenecks
+Bottlenecks are filesystem traversal and external validator runtime. On large monorepos with many YAML files, scan + grep dominates. Large changed file lists can amplify scope resolution cost if not capped. Validator runtime scales approximately linearly with manifest count.
+
+Single points of failure are: missing validator binaries, oversized file sets, and unstable tool output formats across versions.
 
 ### Security Architecture
-The script performs local file reads only. No network calls are required in baseline mode. Risks are mostly path-handling and command injection; avoid `eval` and keep command arguments in arrays when possible. Credentials are not expected and should not be introduced in logs.
+No network calls or secret handling is required. Security risks are local command-invocation risks and path handling. Keep command execution argument-safe and avoid `eval`. Do not interpolate user-controlled flags directly into shell expansions unless quoted.
 
-### Architectural Decisions
-Decision A: Manifest detection by extension plus grep patterns versus parser-based YAML parsing.
-- Option 1 uses `find` and `grep` for `apiVersion` and `kind`.
-  - Effort: Low. Risk: false negatives on nonstandard formatting.
-  - Impact: fast to implement, aligns with existing project behavior.
-  - Maintenance: low, minimal dependencies.
-- Option 2 uses `yq` or a structural parser.
-  - Effort: Medium. Risk: dependency on extra tooling and portability issues.
-  - Impact: more semantic accuracy but stronger environment requirements.
-- Option 3 parses with Kubernetes client libs through containerized tooling.
-  - Effort: High. Risk: orchestration complexity and CI brittleness.
-  - Impact: heavy and over-scoped for this script.
-- Recommendation: Option 1 for now (simple, local, no extra toolchain), with strict tests for skip behavior and manifest filtering to control risk.
+### Architectural Decision Options
 
-Decision B: Per-file validator invocation versus batched invocation.
-- Option 1 runs one command on all discovered files at once.
-  - Effort: Low. Risk: larger command lines and coarser error mapping.
-  - Impact: faster in many repos and simpler logs.
-- Option 2 runs validator per file in a loop.
-  - Effort: Medium. Risk: larger log surfaces and slower run.
-  - Impact: clearer file-level attribution.
-- Option 3 hybrid approach with per-step batching and per-file fallback.
-  - Effort: Medium/High. Risk: code complexity and inconsistent output format.
-- Recommendation: Option 1, plus `KUBE_VALIDATOR` command wrapper and explicit result aggregation. It aligns with FR-8 style (one validation command line) and keeps logs compact.
+Decision A: How to resolve manifest candidates.
+Option 1: `find` recursively + extension filter + content grep for `apiVersion:` and `kind:`. Effort: low, low coupling, predictable. Risk: false positives in edge-case comments/strings, but bounded by domain expectation and test coverage. Maintenance: low, no extra dependencies.
+Option 2: invoke `yq` or parser-based YAML introspection. Effort: medium, parser dependency required. Risk: extra dependency and portability issues across runner environments. Maintenance: medium.
+Option 3: use Kubernetes client tooling directly for strict API object parsing. Effort: high, complexity and performance overhead. Risk: over-engineering versus project constraints.
+Recommended: Option 1.
 
-Decision C: Scope strategy for kubeconform and kubeval.
-- Option 1 uses unified wrapper function with command/flag branching.
-  - Effort: Low. Risk: duplicated output handling if diverging flags.
-  - Impact: clean implementation and predictable behavior.
-- Option 2 writes separate functions per validator.
-  - Effort: Medium. Risk: code duplication and drift.
-  - Impact: easier independent debugging but harder to keep parity.
-- Option 3 delegates to a shared output adapter with map-based dispatch.
-  - Effort: Medium. Risk: abstraction overhead for one agent only.
-  - Impact: reusable but unnecessary complexity now.
-- Recommendation: Option 1 with shared collection helpers and validator-specific execution branch; consistent with the ~200-line domain rule.
+Decision B: How to invoke validators.
+Option 1: one batched command with all discovered files. Effort: low, simpler logs, fewer processes. Risk: coarse per-file diagnostics. Maintenance: low.
+Option 2: one command per file with immediate context. Effort: higher, larger number of subprocess calls. Risk: longer runtime on big repos. Maintenance: medium.
+Option 3: hybrid mode by threshold count. Effort: medium/high. Risk: branching complexity and inconsistent output.
+Recommended: Option 1.
 
-### Future Implications
-The same discovery + validation wrapper shape can be re-used for future policy-oriented agents and should remain in a predictable template form: discover first, then dispatch by selected backend, then common result formatting.
+Decision C: When to use `kubeval` branch.
+Option 1: hard-require kubeconform only. Effort: low but lower compatibility. Risk: spec violation (kubeval must be accepted fallback).
+Option 2: prefer kubeconform then fallback to kubeval. Effort: low, aligns with FR-6. Risk: output parsing differences across tools.
+Option 3: try both and merge failures. Effort: medium/high, noisy output and longer runtime.
+Recommended: Option 2.
+
+Decision D: Scope testing policy.
+Option 1: only clean/issues fixtures. Effort: low. Risk: silent regressions in `CHANGED_FILES` and skip behavior.
+Option 2: add dedicated no-manifest and scoped fixtures. Effort: moderate. Risk: extra fixture maintenance. Benefit: catches branch-specific regressions early.
+Recommended: Option 2.
+
+### Implications for Future Specs
+Keep discovery/filter helpers thin and explicit because kube-agent introduces a discover/filter/validate pattern likely to be reused by docker/ansible/sql/gha-like agents. Add fixture branches from this spec to reduce future FR-3 regressions.
 
 ## Code Quality Planning
 
-### Organization and Structure
-Keep `kube-agent.sh` to three clear sections: configuration, discovery, and execution. Keep shared behavior in the common lib only. Keep SKILL and fixtures isolated to `skills/kube-agent/` and `tests/kube-agent/` respectively.
+### Module Structure and Organization
+Keep `kube-agent.sh` small by isolating domain logic into separate helpers: discover, filter, validate, output. Shared behavior must stay in `lib/x-agent-common.sh`, including setup, output contract, and control primitives.
 
-### DRY Opportunities
-Reusable helpers exist in common lib (`setup_outdir`, `print_result`, `print_overall`, `should_continue`, `need`). Use them consistently to avoid custom output code. Keep one function for manifest collection and one for command builder so kubeconform/kubeval differences stay small.
+### DRY Opportunities and Anti-Drift
+High-value dedup points are already available in common lib: `setup_outdir`, `print_result`, `print_overall`, `should_continue`, `need`. The domain script should only define one validator dispatcher function and one validation command builder to avoid duplicated command logic for kubeconform/kubeval.
 
-### Explicit Error Handling
-Edge handling must include:
-- Missing validators: print both install options, exit 2.
-- Missing `AGENT_SCRIPT` dependencies in scenario tests: harness handles, not script.
-- Unknown command: usage plus exit 2.
-- Help before dependency checks.
-- `CHANGED_FILES` empty or set to files outside target patterns: clean SKIP branch.
-- No manifests after filtering: `SKIP` with explicit reason.
-- `kubeconform` summary parse failures: degrade to generic output and mark FAIL with full log path.
-- Directory traversal exceptions from `find`: ignore missing directories and continue gracefully.
-
-### Failure Modes Pattern
-Every failure path returns either `1` (validation failed) or `2` (bad config/tooling). `SKIP` remains `0` when explicit no-work path is expected.
+### Explicit Error Handling Plan
+Failure paths to implement explicitly:
+1) Neither validator installed: print both options and exit `2`.
+2) Unsupported command: usage message and exit `2`.
+3) `kubeconform`/`kubeval` returns non-zero: print truncated output, `Fix` hint, log path, return fail status.
+4) No YAML or no Kubernetes manifests after filtering: `Result: SKIP` and keep exit `0`.
+5) Empty `CHANGED_FILES`: treat as no filter and run full discovery.
+6) `CHANGED_FILES` paths pointing to non-files: ignore safely and continue.
+7) Schema dir passed but invalid: pass-through and leave underlying tool to report.
+8) File list too long for command line: prefer one invocation but document fallback path if needed.
 
 ### Technical Debt Controls
-Avoid clever tokenization. Keep path matching to spaces-sensitive behavior consistent with existing agents. Do not introduce associative arrays or Bash 4+ features. Add explicit comments for non-obvious behavior (`charts/` exclusion and validator fallback order).
+- No associative arrays or Bash 4-only features.
+- Do not implement custom parsing where existing helper abstractions already exist.
+- Keep fix-hint and skip text stable across changes.
+- Avoid hidden behavior: every branch should print a human-readable reason.
 
 ### Engineering Level
-The implementation should be "engineered enough": one robust discovery function, one command execution function branch, and no premature framework extraction. Avoid overbuilding schema downloads or AST parsing not required by FRs.
+Target implementation is lean and robust, no over-abstraction. The goal is deterministic behavior with explicit branches for optional scoping and fallback tool selection.
 
 ## Test Strategy
 
 ### Coverage Plan
-Unit-style tests are not currently present in this repository; use scenario tests as the primary verification layer and targeted command checks as supplement.
-Implementation verification layers:
-1. `tests/run-scenarios.sh` shellcheck gate.
-2. `tests/run-scenarios.sh kube-agent` clean and issues fixtures.
-3. Additional scoped/no-manifest fixtures to exercise FR-3 and skip branches.
-4. Manual validator-path verification with and without `KUBE_SCHEMAS_DIR` to confirm passthrough.
+Primary verification remains scenario-driven via `tests/run-scenarios.sh` because there is no dedicated unit test framework in this repo. Keep the validation signal as:
+1) harness-level exit assertions,
+2) `shellcheck --severity=warning`, and
+3) manual targeted checks for output text on branch-sensitive behavior.
 
-### Edge Cases to Test
-No manifests at repo root.
-Only non-Kubernetes YAML files.
-`CHANGED_FILES` set to YAML but outside Kubernetes set.
-`CHANGED_FILES` set to valid Kubernetes manifest.
-`KUBE_SCHEMAS_DIR` pointing to custom location.
-Both tool-path branches: kubeconform first, kubeval fallback.
-Directory exclusions for `.github/`, `.git/`, `node_modules/`, `charts/`.
-`--help` before any dependency checks.
-Command `validate` and default `all`.
+### Required Test Matrix
+- `tests/run-scenarios.sh kube-agent` (full suite for kube-agent only).
+- `tests/run-scenarios.sh` (global pass as a smoke check after edits).
+- `shellcheck --severity=warning` via harness and direct invocation if needed.
+- Scenario-level fixture expansion for scoped and skip branches.
 
-### Failure Paths to Assert
-Exit 2 when neither validator is found.
-Exit 1 for invalid manifests in issues fixture.
-Exit 0 for clean manifests and for no-manifest SKIP scenario.
-`Result: SKIP` messages should remain user-facing and not hidden.
-`Fix:` hint present on FAIL and references `/kube-agent validate`.
+### Edge Cases and Expected Assertions
+- clean fixture with valid Deployment passes (`EXPECT_EXIT=0`, `REQUIRED_TOOLS=kubeconform`).
+- issues fixture with invalid manifest fails (`EXPECT_EXIT=1`, `REQUIRED_TOOLS=kubeconform`).
+- no manifest fixture yields `SKIP` and exits `0`.
+- non-Kubernetes YAML fixture contains `apiVersion` but no `kind` (or vice versa) and must be skipped.
+- CHANGED_FILES scoping where only Kubernetes manifests are inside set.
+- CHANGED_FILES no-match (non-YAML or non-k8s YAML) yields `SKIP`.
+- CHANGED_FILES includes deleted/nonexistent file entries, should still be robust.
+- fallback tool path when kubeconform is absent and kubeval is present.
+- no tool path: tool detection exits `2` with both install hints.
+- `KUBE_SCHEMAS_DIR` custom path included in invoked command for both tools.
+- `--help` works without validator installed.
 
-### Test Quality Standards
-Assertions should be stronger than exit code alone where possible. Where harness is exit-only, add explicit log-content checks during manual validation, especially for:
-- `Validator: kubeconform` message under tool selection.
-- `Result: SKIP` reason clarity.
-- `Full log` path printed.
-- Count output exists on kubeconform path.
-- Error pass-through from kubeval path when run.
+### Failure Modes and Error Path Tests
+- command-path unknown command exits `2`.
+- no valid manifests found after discovery returns `SKIP` not `FAIL`.
+- malformed manifest causing validator parse fail returns `1` and `Fix` hint.
+- command dispatch path where `RUN_VALIDATE=0` and `all` should skip and still report pass if no other failures.
+
+### Quality Expectations
+Assertions should check not only exit code but also structured text when possible:
+- `Validator: kubeconform` and `Validator: kubeval` output when branch chosen.
+- `Result: PASS|FAIL|SKIP`, `Fix:` on failures.
+- `Full log: <path>` path exists and is stable for `SKIP`/`FAIL`.
+- `Overall: PASS|FAIL` appears once.
 
 ## Performance Considerations
 
-### N+1 and Scan Patterns
-Avoid nested file-level validation calls that multiply command overhead. Prefer one manifest list and one validator call unless required per-tool behavior dictates otherwise. Prune `find` with `-path` exclusions at source to avoid scanning `node_modules` and `.git`.
+### I/O and Traversal Costs
+`find` plus `grep` is the dominant local cost. Pruning directory trees early (`.git`, `.github`, `.git` directories, `node_modules`, `charts`) is essential to avoid scanning generated/dependency trees.
 
-### Memory Usage
-Avoid building huge bash arrays with every path when possible; use newline-separated strings and per-step streaming to logs. This is adequate for large trees and keeps shell memory stable.
+### Command Invocation Strategy
+Use one external command call for validation per run to avoid N+1 subprocess overhead. Keep argument list in an array-like helper style where supported; if the argument array becomes too large, we may need a fallback chunking strategy (only if needed in large repos).
 
-### Caching and Reuse
-No cross-run cache is needed. Within a run, cache selected validator name and discovered manifest list to avoid recomputation between command paths.
+### Memory and Log Footprint
+Store discovered file list as newline-separated plain strings in variables to avoid large arrays and keep compatibility with Bash 3.2. Logs go to temp files in `OUTDIR` and are only previewed (first `MAX_LINES`) on terminal.
 
-### Hot Paths
-Fast path is clean repos with no Kubernetes files: ensure low-cost discovery and immediate SKIP.
-Slow path is large monorepos with many YAML files: tune exclusion list and avoid repeated grep passes if possible.
+### Caching and Future Optimization
+No cross-run cache is justified. Per-run cache of discovered file list and validator selection is sufficient.
 
-### Optimization Boundaries
-Keep optimization bounded to discovery and external command invocation. Do not introduce semantic YAML parsing or API calls that would exceed the domain of this script.
+### Hotspots and Risky Paths
+- Large `find` in monorepos.
+- Large manifest files with comments that trigger broad grep matches.
+- Parsing summary output differences between validator versions.
+- Frequent lock contention if lock is added and runs overlap.
 
-## Step-by-step Implementation Plan
+## Step-by-Step Implementation Plan
 
-1. What: Reconfirm the acceptance criteria from `.ralph/task.md`, `.ralph/specs/07-kube-agent.md`, and current implementation patterns; map each FR to a concrete code path. Why: prevents drift from the official contract and avoids partial implementations. How: create a checklist-to-file trace at code-level before any edits. Edge Cases: FR-6 fallback wording and FR-3 scope semantics. Tests: one dry-run walkthrough against FR list. Risks: overfitting to current environment rather than spec.
-2. What: Add skeleton `skills/kube-agent/scripts/kube-agent.sh` with shebang, strict shell mode, shared lib sourcing, and environment knobs `RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, `CHANGED_FILES`, plus universal knobs. Why: ensures all required integration points exist before command logic. How: copy established scaffold style from `gha-agent`/`helm-agent` and only add kube-specific behavior in dedicated functions. Edge Cases: `CHANGED_FILES` unset and env variable pre-seeded states. Tests: source script under minimal shellcheck-level checks. Risks: missing shebang or missing lib path assumptions.
-3. What: Implement `detect_validator` with explicit ordering and exact exit-2 failure contract. Why: FR-6 requires preference of kubeconform over kubeval and explicit human-readable guidance when unavailable. How: set `KUBE_VALIDATOR` using `command -v`; print both install hints, then `exit 2`. Edge Cases: both tools present, one tool present, neither present. Tests: run with each environment setup. Risks: non-zero command detection on shells with constrained PATH.
-4. What: Implement manifest discovery function with recursive `.yml/.yaml` scan and ignore filters for `.github/`, `.git/`, `node_modules/`, and `charts/`. Why: excludes non-relevant trees and avoids Helm overlap. How: collect candidate files by extension, then content filter on `apiVersion:` and `kind:` via grep; keep newline-separated list for logging and reuse. Edge Cases: binary/large YAML files, symlinks, missing directories. Tests: no-manifest fixture and mixed manifest/non-manifest fixture. Risks: false positives from substring matches in comments.
-5. What: Add CHANGED_FILES-aware scope path and fallback discovery semantics. Why: FR-3 requires scoped checks when changed files are supplied by callers. How: when `CHANGED_FILES` is set, process only those entries; otherwise full-tree discovery. Report resolved scope path and use SKIP when no matches. Edge Cases: whitespace in file names, deleted paths, directory entries. Tests: dedicated scoped fixture expecting targeted pass/fail behavior and scoped-no-match SKIP. Risks: inconsistent word-splitting semantics across agents.
-6. What: Implement `run_validate` to build manifest args and execute kubeconform or kubeval branch with correct flags. Why: FR-6 to FR-13 require real validation plus schema override support. How: for kubeconform call `-summary -output json` and append `-schema-location` only when set; for kubeval call `--strict --schema-location` conditionally. Edge Cases: missing summary JSON or inconsistent json parse support. Tests: clean, issues, and schema-path scenario. Risks: output parsing mismatch and false success due tool differences.
-7. What: Normalize output contract with `print_result` and clear count reporting. Why: output contract consistency is a hard acceptance criterion. How: report pass/fail/skip with time, `Fix:` hint for fail, and `Full log` path; include a manifest summary that is deterministic across both validators. Edge Cases: validator returns non-standard stderr patterns. Tests: verify both fail and pass outputs include Step/Result/Overall lines. Risks: missing `Fix:` hint or inconsistent message under SKIP.
-8. What: Implement command router for `validate` and `all`, parse `--fail-fast`, and guard universal toggles. Why: FR-5 and FR-3 require step control and composability. How: parse flag first, set `overall_ok` default `1`, call `run_validate` when `RUN_VALIDATE=1`, respect `should_continue` for `all`. Edge Cases: explicit `validate` command with `RUN_VALIDATE=0`; unknown command handling. Tests: command matrix (`validate`, `all`, bad command). Risks: returning non-zero on intended SKIP.
-9. What: Author `skills/kube-agent/SKILL.md` with trigger aliases and complete `allowed-tools` including `KUBE_SCHEMAS_DIR`, `CHANGED_FILES`, and universal knobs. Why: agent invocation and auto-command trust policy requires accurate tool declaration. How: mirror existing markdown frontmatter style and include concise usage section. Edge Cases: forgetting `RUN_VALIDATE` or `KUBE_SCHEMAS_DIR` in allowed-tools. Tests: not executable by unit tests; use static review before install integration. Risks: future install-time permission prompts or blocked execution contexts.
-10. What: Add `tests/kube-agent/clean/` and `tests/kube-agent/issues/` fixtures with representative Kubernetes Deployment manifests and failing replica/type payload. Why: verifies happy and failing baseline path plus deterministic exit semantics. How: mirror existing fixture shape and set `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS=all`, `EXPECT_EXIT`, `REQUIRED_TOOLS="kubeconform"`. Edge Cases: no tool installed in CI should skip due required-tools contract. Tests: `tests/run-scenarios.sh kube-agent`. Risks: fixture over-constrained to one validator version.
-11. What: Add FR-3 and skip-path fixtures to capture scoped and no-manifest behavior. Why: earlier feedback repeatedly flagged scoped-path blind spots; we must prevent regression. How: one fixture sets `CHANGED_FILES` to a non-Kubernetes YAML expecting SKIP; another sets `CHANGED_FILES` to Kubernetes manifest expecting targeted run behavior. Edge Cases: scenario name collisions and missing working directory setup. Tests: targeted run with `CHANGED_FILES` injection. Risks: making test suite brittle across file system layout.
-12. What: Update `install.sh` `SKILLS` list and dependency check/help snippet mappings for kube-agent. Why: runtime discoverability and install completeness are required by task AC. How: include in `SKILLS`, add warning in optional dependency checks for `kubeconform`/kubeval, add snippet line for skill usage. Edge Cases: existing install options for codex/claude-only flows and remote installs. Tests: dry-run local install flow and ensure script and snippet include kube-agent. Risks: forgetting remote patch path assumptions for SKILL path rewrites.
-13. What: Update `README.md` in both the "Available Agents" table and quick usage section; add `kube-agent` examples for clean invocation and common usage knobs. Why: metadata parity and discoverability are explicit project expectations. How: keep phrasing concise and avoid introducing style drift. Edge Cases: numbering of examples and link/path consistency. Tests: no command test; manual read-through and consistency check. Risks: docs diverge from script names/commands.
-14. Run `tests/run-scenarios.sh kube-agent`, `shellcheck --severity=warning` via existing harness expectations, and then `ralph validate work` after all edits. Why: validates functional and process acceptance before handoff. How: capture failures, patch with minimal corrective changes, and rerun until clean. Edge Cases: host without kubeconform/kubeval where fixture skips apply; treat only non-skip failures as defects. Risks: stale scenario cache in loop and false positive pass from SKIP in absence of validators.
+1. What: Validate spec mapping and output contract boundaries before edits.
+Why: Ensures implementation follows FR-4/FR-5/FR-6 and avoids drift from existing agent conventions.
+How: Align each planned change to FR list and acceptance criteria in `.ralph/specs/07-kube-agent.md`.
+Edge Cases: Ensure command set is only `validate` + `all`, and that help path is dependency-independent.
+Tests: Not applicable yet.
+Risks: Over-implementing non-required behaviors.
+
+2. What: Scaffold `skills/kube-agent/scripts/kube-agent.sh` with shared-lib integration and canonical env defaults.
+Why: This establishes the contract baseline used by all subsequent logic.
+How: Copy `bash-agent`/`gha-agent` style structure, set shebang and `set -euo pipefail`, source `x-agent-common.sh`, define `RUN_VALIDATE` and `KUBE_SCHEMAS_DIR` defaults plus universal knobs via shared lib.
+Edge Cases: Keep `SCRIPT_DIR` and `LIB_DIR` path stable for local + remote installs.
+Tests: Source script with `--help` in minimal environment.
+Risks: Incorrect lib path breaks execution.
+
+3. What: Implement tool detection and selection flow.
+Why: FR-6 requires explicit preference and fallback behavior with clear exit-2 guidance.
+How: Set `KUBE_VALIDATOR` via ordered `command -v` checks. If none found, print both required-tool options and `exit 2`.
+Edge Cases: both tools present, only one present, neither present.
+Tests: Scenario environment with missing tools should exit 2 when required.
+Risks: Missing install guidance strings or wrong precedence order.
+
+4. What: Implement recursive YAML discovery with exclusion set.
+Why: Discovery is the core correctness boundary for accuracy and runtime cost.
+How: Build one helper using `find` and prune paths `.github`, `.git`, `node_modules`, `charts` before collecting `*.yml`/`*.yaml`.
+Edge Cases: symlink loops, nested helm chart directories, large trees.
+Tests: no-manifest fixture and clean fixture.
+Risks: Incomplete exclusion list leaks unwanted paths.
+
+5. What: Implement manifest filter by content checks.
+Why: Avoid validating arbitrary YAML not related to Kubernetes objects.
+How: Keep only files containing both `apiVersion:` and `kind:` using grep in deterministic pass over candidate list.
+Edge Cases: lowercase/malformed fields, comments containing tokens, multi-doc YAML; choose exact token scan per spec and cover with tests.
+Tests: fixture with non-k8s YAML should be skipped.
+Risks: false positives/false negatives due text matching.
+
+6. What: Implement CHANGED_FILES scoping after discovery and before validation.
+Why: FR-3 requires scoped execution and explicit skip path when no scoped matches exist.
+How: If `CHANGED_FILES` non-empty, intersect with discovered manifests by exact path match and keep only existing files. Emit a scoped count.
+Edge Cases: whitespace-separated file list, nonexistent files, directories, duplicate entries.
+Tests: scoped-match and scoped-no-match scenarios.
+Risks: whitespace in file names; follow existing space-delimited pattern and document limitation.
+
+7. What: Implement `run_validate` command with unified file batching and schema-location handling.
+Why: FR-8 requires real validation behavior for both tools and custom schema directory support.
+How: Build `cmd` list once per run with file list appended; for kubeconform add `-summary -output json` and optional `-schema-location`; for kubeval add `--strict` and optional `--schema-location`.
+Edge Cases: empty file list, mixed valid/invalid resource files, missing schema location path.
+Tests: clean and issues fixtures plus schema-location fixture.
+Risks: command-line overrun from huge lists; consider fallback chunking only if observed.
+
+8. What: Parse validator output for resource counts and produce stable step output.
+Why: FR requires valid/invalid resource count reporting.
+How: For kubeconform output, try to parse `-output json` summary lines into counts when possible; for kubeval, derive success/failure from exit status and log output count semantics.
+Edge Cases: unsupported output formats from older kubeconform versions.
+Tests: issue fixture should include invalid count; clean fixture may report zero invalid.
+Risks: parser fragility across versions.
+
+9. What: Implement skip, fail, and pass rendering via shared helpers with consistent contract.
+Why: Step contract is hard acceptance: `Step`, `Result`, `Fix`, `Overall`, logs, elapsed time.
+How: Use `step`, `print_result`, `print_overall`, `fmt_elapsed`. For skip path print explicit reason and return success.
+Edge Cases: validator crash producing truncated logs; no output but non-zero exit.
+Tests: no-manifest fixture, validator absent, invalid manifest fixture.
+Risks: omitting `Fix` line on `FAIL`.
+
+10. What: Implement command routing and fail-fast behavior.
+Why: FR-5 requires both command support and runtime control by `--fail-fast`.
+How: Support `validate` and `all`; parse `--fail-fast` and in `all` path use `should_continue` with `RUN_VALIDATE` gate.
+Edge Cases: explicit `all` with `RUN_VALIDATE=0`, unknown command.
+Tests: `validate` command should run direct; `all` should no-op when `RUN_VALIDATE=0`.
+Risks: `overall_ok` not initialized before use.
+
+11. What: Add `skills/kube-agent/SKILL.md` metadata.
+Why: Agent invocation depends on metadata and allowed-tools completeness.
+How: Mirror existing SKILL format for agents, include triggers and `allowed-tools`: `RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `KUBE_SCHEMAS_DIR`, `TMPDIR_ROOT`.
+Edge Cases: missing `TMPDIR_ROOT` entry if project policy requires it.
+Tests: static review before implementation handoff.
+Risks: install/invocation mismatch due missing patterns.
+
+12. What: Create clean fixture and invalid fixture under `tests/kube-agent`.
+Why: baseline pass/fail paths are required by acceptance.
+How: add `clean/deployment.yaml`, `clean/scenario.env`, `issues/bad-deployment.yaml`, `issues/scenario.env` matching spec payloads and `REQUIRED_TOOLS="kubeconform"`.
+Edge Cases: kubeconform absent -> fixture skipped by harness.
+Tests: `tests/run-scenarios.sh kube-agent` expects exit 0 and 1.
+Risks: schema/version differences if manifest fields conflict with old kubeconform.
+
+13. What: Add two scoped/skip fixtures for FR-3 confidence.
+Why: feedback and FR test strategy demand explicit branch coverage for scoped path and no-manifest conditions.
+How: add `tests/kube-agent/no-manifests/` with `SCENARIO_NAME`, no Kubernetes files, `EXPECT_EXIT=0`; add `tests/kube-agent/scoped/` with mixed YAML and `CHANGED_FILES` pointing to a single kube manifest or non-manifest set.
+Edge Cases: ensure scenario-specific `CHANGED_FILES` can be loaded from each env.
+Tests: scenario runs should show `SKIP` in no-match cases and targeted validation in scoped match.
+Risks: fixture naming and scenario collisions across filters.
+
+14. What: Update `install.sh` for installation surface and dependency messaging.
+Why: FR-13 requires skill availability and discoverability.
+How: add `kube-agent` to `SKILLS`; add optional dependency check block for `kubeconform` and `kubeval` (warn only if both missing); add AGENTS/CLAUDE usage line in snippet.
+Edge Cases: remote install path rewrite, local symlink mode, partial tool availability.
+Tests: run local script dry path and parse `--help` output.
+Risks: forgetting to add install snippet line so skill not shown to users.
+
+15. What: Update `README.md` to include `kube-agent` in inventory, usage examples, and checks language.
+Why: required metadata and user-facing discoverability.
+How: add row in table, direct invocation example, and update x-agent checks list.
+Edge Cases: ordering and duplicate lines.
+Tests: manual review and grep verification.
+Risks: stale examples if command names or options drift.
+
+16. What: Update `.ralph/exploration.md` with the current file map and behavior summary.
+Why: reduces re-discovery cost for next plan agent and enforces continuity.
+How: add kube-agent and discovery details (exclusion paths, scope behavior, fixture set).
+Edge Cases: stale notes after implementation.
+Risks: outdated orientation if future refactors change architecture.
+
+17. What: Run final gate and close planning loop.
+Why: required acceptance condition from user and AGENTS.
+How: run `ralph validate plan` then `ralph validate work`; address pass/fail before handoff.
+Edge Cases: missing tooling in environment causing false negatives.
+Risks: failing scenario due expected branch not implemented.
 
 ## Decision Log
 
-Decision 1: Use kubeconform-first fallback to kubeval.
-Options: (a) require only one explicit tool, (b) prefer kubeconform then fallback to kubeval, (c) run both and accept on intersection.
-Chosen: (b) based on explicit FR-6 and implementation simplicity.
-Implications: keeps behavior deterministic for users and future agents with similar "primary optional fallback" semantics.
+Decision 1: Prefer kubeconform first, fallback to kubeval.
+Options: (a) hard-require kubeconform, (b) prefer kubeconform and fallback to kubeval, (c) attempt both and combine diagnostics.
+Chosen: (b).
+Impact: deterministic behavior, stable support matrix, minimal runtime, explicit compatibility.
+Implications: future validators can be swapped into a single resolver branch if needed.
 
-Decision 2: Use extension+content grep filtering for Kubernetes manifests.
-Options: (a) cheap grep-based filtering, (b) YAML parse AST filtering, (c) Kubernetes CLI schema validation pass only.
-Chosen: (a) for speed and zero extra dependency footprint, but with scoped-path tests to constrain drift.
-Implications: avoids external parser dependency and keeps the script below the 200-line domain target.
+Decision 2: Use lightweight grep-based manifest classification.
+Options: (a) extension-only with `apiVersion` + `kind` content filter, (b) YAML parser-based extraction, (c) Kubernetes-aware parse via additional tooling.
+Chosen: (a).
+Impact: zero new dependencies and fast implementation; explicit test coverage required for false positives.
+Implications: include no-manifest and non-k8s YAML fixtures to keep risk bounded.
 
-Decision 3: Add dedicated CHANGED_FILES and no-manifest fixtures for kube-agent in addition to clean/issues.
-Options: (a) spec-only clean/issues, (b) include two focused scoped/skip fixtures, (c) add broad fuzz-like fixtures.
-Chosen: (b) because it directly enforces FR-3 and resolves known review feedback pattern on path scoping.
-Implications: increases confidence and should be copied to remaining scoped agents in later specs.
+Decision 3: Enforce branch-specific scenario coverage in test plan.
+Options: (a) rely only on clean/issues, (b) add scoped and skip branches as dedicated scenarios, (c) add scripted ad-hoc test commands outside harness only.
+Chosen: (b).
+Impact: better regression protection where full scans can hide CHANGED_FILES and skip-path bugs.
+Implications: follow this rule for future scoped agents (helm/dock/ansible/sql/ etc.).
 
 ## Edge Cases and Risks
 
-Scope filtering misses expected files because of spaces in filenames.
-Manifest discovery false positives from comments containing `apiVersion` and `kind`.
-Validator output format differences across installed versions of kubeconform and kubeval.
-CHANGED_FILES includes deleted paths or directories.
-Schema location option passed with incorrect type or missing directory.
-No manifests found while CHANGED_FILES set to YAML-like non-Kubernetes files.
-`--help` invoked in minimal environment where helper scripts are missing.
-Fixture-based test drift when external tool version changes behavior.
-README/install divergence from script command names.
-
-## Risks and Dependencies
-
-Dependencies:
-`kubeconform` or `kubeval` availability in the environment for positive-path scenarios.
-Shared library stability in `lib/x-agent-common.sh`.
-Scenario harness consistency for environment-variable injection.
-
-Assumptions that may not hold:
-`kubeconform` output includes machine-parseable summary fields used for counts.
-External validator messages remain non-empty and useful on failure.
-Workspace contains manifests under default ignore rules.
-Repo path and fixture paths are accessible by relative invocation from fixture directories.
+- CHANGED_FILES contains spaces; current environment parser is whitespace-delimited and not space-safe.
+- `apiVersion:` / `kind:` keys in comments can create false positives.
+- Validator output formats change across versions and may break count extraction.
+- `kubeval` strict mode behavior differs from `kubeconform` summary model.
+- Very large manifest sets may exceed shell argument limits; add fallback chunking only if needed in implementation.
+- `setup_lock` optional for concurrency; decide if needed before finalizing.
+- `charts/` exclusion may unintentionally skip legitimate manifests in chart repo roots; this is intentional to avoid helm domain overlap.
+- No tool installed: `run-scenarios` may skip instead of fail, so manual environment checks remain required for full pass.
+- Installer remote mode may need explicit path assumptions for future local copy of `SKILL.md` and script path.
+- Documentation and install paths can drift from actual command names if not synchronized in one pass.

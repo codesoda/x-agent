@@ -1,0 +1,33 @@
+DECISION: REWORK
+ITERATION: 2
+SPEC: 07-kube-agent.md
+
+SUMMARY:
+Spec coverage is substantially complete, but the implementation is not yet release-ready due one previously unresolved issue still affecting determinism in scenario validation and one newly identified fallback-test fragility. Core functionality and most acceptance criteria checks are in place.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+None
+
+MINOR ISSUES:
+- [R-008] kubeconform remains network-coupled in fixture execution (`tests/kube-agent/clean/scenario.env:5`, `tests/kube-agent/issues/scenario.env:5`, `tests/kube-agent/scoped-match/scenario.env:5`, `tests/kube-agent/schema-dir/scenario.env:5`, `skills/kube-agent/scripts/kube-agent.sh:152`), so `tests/run-scenarios.sh kube-agent` fails in offline environments even for scenarios expected to pass.
+- [R-011] `tests/kube-agent/run-with-kubeval.sh:14` strips entire PATH directories containing `kubeconform`; when `kubeconform` and `kubeval` share a directory, this drops `kubeval` too and can make kubeval scenarios fail.
+
+NEXT STEPS:
+Return to WORK phase with same plan to fix issues
+
+---
+FEEDBACK FOR NEXT PHASE:
+
+Priority fixes:
+1. [R-008] Stabilize kubeconform fixture execution without network dependency so clean/issues/scoped/scheme-dir pass reliably in offline CI/machine contexts.
+2. [R-011] Rework kubeval wrapper so it excludes only the `kubeconform` binary rather than entire PATH entries, preserving `kubeval` resolution when both tools are co-located.
+
+Edge cases to handle:
+1. [R-012] Consider PATH/`kubeconform` and `kubeval` co-location in test environments and prevent false negatives in fallback branch assertions.
+
+Test gaps:
+1. [R-013] Add an environment where both tools are installed to verify fallback path remains valid with the updated wrapper behavior.
+2. [R-014] Add deterministic schema-resolution fixture for kubeconform by using a local schema directory and asserting valid schema-location passthrough from both branches.

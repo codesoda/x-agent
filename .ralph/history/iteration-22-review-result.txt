@@ -1,0 +1,34 @@
+DECISION: REWORK
+ITERATION: 22
+SPEC: 07-kube-agent.md
+
+SUMMARY:
+Implementation follows the intended kube-agent pattern and core discovery/validation flow is in place, but it does not fully satisfy the spec-required validation behavior and branch coverage needed to prove CHANGED_FILES semantics.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+- [R-001] `skills/kube-agent/scripts/kube-agent.sh` does not follow the required kubeconform invocation contract (`kubeconform -summary -output json`) and therefore does not satisfy the spec’s explicit command/telemetry contract for kubeconform validation (`kubeconform -summary -output json <files>` in Spec 07). The script sets `cmd="kubeconform -summary"` in the validate path, which omits `-output json` and prevents reliable valid/invalid parsing and reporting.
+- [R-002] Scenario coverage for FR-3/edge branches is incomplete. `tests/kube-agent` has `clean`, `issues`, and `no-manifests` only, but no scenario verifies `CHANGED_FILES` scoped filtering (match + no-match) and no scenario verifies non-Kubernetes YAML is skipped. This leaves critical filtering behavior untested despite the test strategy and prior issue log explicitly requiring it. `run-scenarios.sh` does support scenario-scoped env variables via `scenario.env`, so this gap is test-authoring, not harness-limitation.
+
+MINOR ISSUES:
+- [ ] `skills/kube-agent/scripts/kube-agent.sh` builds command strings and executes via `eval` in `run_validate`, which is fragile for spaces/special characters in manifest paths and should be replaced with array-style argument passing.
+
+NEXT STEPS:
+Return to WORK phase with same plan to fix issues
+
+---
+FEEDBACK FOR NEXT PHASE:
+
+Priority fixes:
+1. [R-001] Update kubeconform execution to include `-output json`, and parse its summary to emit valid/invalid counts, then validate/adjust clean/issues assertions accordingly.
+2. [R-002] Add kube-agent scoped scenarios under `tests/kube-agent/` to exercise `CHANGED_FILES` match and no-match behavior, including at least one run with a non-Kubernetes YAML-only directory.
+
+Edge cases to handle:
+1. [R-003] Add a fixture with `apiVersion:`/`kind:` absent to confirm schema validation discovery filters correctly and step exits `SKIP`.
+2. [R-004] Add safe handling for `CHANGED_FILES` paths that reference files in excluded directories (`charts/`, `.github/`, `.git/`, `node_modules/`) and ensure output is explicit.
+
+Test gaps:
+1. [R-005] Add assertions in `tests/kube-agent/*` logs for `KUBE_SCHEMAS_DIR` passthrough to both kubeconform and kubeval command lines.
+2. [R-006] Add scenario(s) with `REQUIRED_TOOLS=kubeval` to verify fallback-path behavior when kubeconform is absent.

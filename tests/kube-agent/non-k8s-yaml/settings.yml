@@ -1,0 +1,6 @@
+app:
+  name: my-service
+  version: 1.0.0
+features:
+  enabled: true
+  debug: false
