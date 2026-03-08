@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(MAX_LINES=* scripts/py-agent.sh*)
   - Bash(KEEP_DIR=* scripts/py-agent.sh*)
   - Bash(FAIL_FAST=* scripts/py-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/py-agent.sh*)
 ---
 
 # Py Agent
@@ -57,6 +58,7 @@ scripts/py-agent.sh test tests/unit/          # specific directory
 | `MAX_LINES` | `40` | Max output lines printed per step (unlimited in CI) |
 | `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
 | `FAIL_FAST` | `0` | Stop after first failing step; passes `-x` to pytest |
+| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes format/lint to affected `.py` files |
 
 ## Auto-Detection
 

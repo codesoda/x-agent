@@ -17,6 +17,7 @@ RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
 RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/py-agent.XXXXXX")"
@@ -31,6 +32,31 @@ cleanup() {
   exit "$code"
 }
 trap cleanup EXIT
+
+# Workflow-level lock: only one py-agent instance runs at a time.
+# Prevents overlapping runs when agents invoke the script concurrently.
+LOCKFILE="${TMPDIR_ROOT%/}/py-agent.lock"
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock -n 9; then
+    echo "py-agent: waiting for another run to finish..."
+    flock 9
+  fi
+else
+  # macOS: flock not available, use perl as a portable fallback.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "Warning: neither flock nor perl available; skipping workflow lock" >&2
+  else
+    perl -e '
+      use Fcntl ":flock";
+      open(my $fh, ">&=", 9) or die "fdopen: $!";
+      if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        print STDERR "py-agent: waiting for another run to finish...\n";
+        flock($fh, LOCK_EX) or die "flock: $!";
+      }
+    '
+  fi
+fi
 
 hr() { echo "------------------------------------------------------------"; }
 
@@ -96,6 +122,25 @@ have_tool() {
   esac
 }
 
+# Resolve CHANGED_FILES to .py files only.
+# Populates _CHANGED_PY_FILES with the filtered list.
+_CHANGED_PY_FILES=()
+resolve_changed_py_files() {
+  _CHANGED_PY_FILES=()
+  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+
+  local file
+  for file in $CHANGED_FILES; do
+    if [[ "$file" == *.py ]]; then
+      _CHANGED_PY_FILES+=("$file")
+    fi
+  done
+
+  if [[ ${#_CHANGED_PY_FILES[@]} -gt 0 ]]; then
+    echo "Scoped to ${#_CHANGED_PY_FILES[@]} changed .py file(s)"
+  fi
+}
+
 run_format() {
   step "format"
   local log="$OUTDIR/format.log"
@@ -108,6 +153,12 @@ run_format() {
 
   echo "Mode: $mode"
 
+  # Collect scoped file targets (empty = whole project).
+  local -a targets=()
+  if [[ ${#_CHANGED_PY_FILES[@]} -gt 0 ]]; then
+    targets=("${_CHANGED_PY_FILES[@]}")
+  fi
+
   # Try ruff format first, then black
   if have_tool ruff; then
     found=1
@@ -115,6 +166,9 @@ run_format() {
     local -a args=(ruff format)
     if [[ "$mode" == "check" ]]; then
       args+=(--check --diff)
+    fi
+    if [[ ${#targets[@]} -gt 0 ]]; then
+      args+=("${targets[@]}")
     fi
     if run_cmd "${args[@]}" >"$log" 2>&1; then
       :
@@ -124,9 +178,14 @@ run_format() {
   elif have_tool black; then
     found=1
     echo "Using: black"
-    local -a args=(black .)
+    local -a args=(black)
     if [[ "$mode" == "check" ]]; then
-      args=(black --check --diff .)
+      args+=(--check --diff)
+    fi
+    if [[ ${#targets[@]} -gt 0 ]]; then
+      args+=("${targets[@]}")
+    else
+      args+=(.)
     fi
     if run_cmd "${args[@]}" >"$log" 2>&1; then
       :
@@ -167,11 +226,21 @@ run_lint() {
   local ok=1
   local found=0
 
+  # Collect scoped file targets (empty = whole project).
+  local -a targets=()
+  if [[ ${#_CHANGED_PY_FILES[@]} -gt 0 ]]; then
+    targets=("${_CHANGED_PY_FILES[@]}")
+  fi
+
   # Try ruff check first, then flake8
   if have_tool ruff; then
     found=1
     echo "Using: ruff check"
-    if run_cmd ruff check >"$log" 2>&1; then
+    local -a args=(ruff check)
+    if [[ ${#targets[@]} -gt 0 ]]; then
+      args+=("${targets[@]}")
+    fi
+    if run_cmd "${args[@]}" >"$log" 2>&1; then
       :
     else
       ok=0
@@ -179,7 +248,11 @@ run_lint() {
   elif have_tool flake8; then
     found=1
     echo "Using: flake8"
-    if run_cmd flake8 >"$log" 2>&1; then
+    local -a args=(flake8)
+    if [[ ${#targets[@]} -gt 0 ]]; then
+      args+=("${targets[@]}")
+    fi
+    if run_cmd "${args[@]}" >"$log" 2>&1; then
       :
     else
       ok=0
@@ -335,6 +408,7 @@ Env knobs:
   RUN_LINT=0|1
   RUN_TYPECHECK=0|1
   RUN_TESTS=0|1
+  CHANGED_FILES="f1 f2"   # scope format/lint to changed .py files
 
 Auto-detection:
   - Runner: detects uv, poetry, or plain python from lock files
@@ -366,6 +440,8 @@ main() {
   local cmd="${1:-all}"
   shift 2>/dev/null || true
   local overall_ok=1
+
+  resolve_changed_py_files
 
   # Verify we're in a Python project
   if [[ ! -f "pyproject.toml" && ! -f "setup.py" && ! -f "setup.cfg" && ! -f "requirements.txt" ]]; then
