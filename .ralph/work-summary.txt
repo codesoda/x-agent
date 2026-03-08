@@ -1,0 +1,74 @@
+# Work Summary — Spec 01: Extract Shared Library
+
+## What was implemented
+
+Created `lib/x-agent-common.sh` containing all shared boilerplate extracted from existing agents:
+
+### Environment defaults
+- `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` with sensible defaults
+- CI-aware `MAX_LINES` (999999 in CI, 40 locally) with explicit override support
+
+### Helper functions
+- `hr()` — separator line
+- `step(name)` — step header with timing
+- `fmt_elapsed()` — elapsed time for current step
+- `should_continue()` — fail-fast guard (requires caller `overall_ok`)
+- `need(tool)` — required tool check, exits 2 if missing
+
+### Setup helpers (not auto-executed)
+- `setup_outdir(agent-name)` — creates temp dir, sets OUTDIR, installs cleanup trap
+- `setup_lock(agent-name)` — workflow lock with flock + perl fallback
+
+### Result formatting
+- `print_result(ok, log_path, fix_hint)` — prints Result: PASS|FAIL with optional Fix: hint
+- `print_overall(overall_ok)` — prints Overall: PASS|FAIL with Logs: path
+
+### install.sh updates
+- Remote installs now fetch `lib/x-agent-common.sh` from the repo
+- `install_lib_to_root()` function installs lib/ directory (symlink for local, copy for remote)
+- Called before skill installation in both Claude and Codex install paths
+
+### run-scenarios.sh updates
+- Shellcheck scope expanded to include `lib/` directory
+
+## Deviations from work plan
+
+None. All implementation followed the plan exactly.
+
+## Edge cases handled
+- Sourcing produces zero output and no side effects (verified)
+- `need()` exits with code 2 for missing tools (verified)
+- `setup_outdir` cleanup preserves logs on failure or `KEEP_DIR=1` (verified)
+- `setup_outdir` removes temp dir on success with `KEEP_DIR=0` (verified)
+- CI MAX_LINES=999999 with `CI=true` and `CI=1` (verified)
+- Local MAX_LINES=40 when CI unset (verified)
+- Explicit `MAX_LINES` override takes precedence (verified)
+- Lock fallback: flock -> perl -> warning (implemented)
+- All Bash 3.2 compatible (no associative arrays, no readarray, no `|&`)
+
+## Tests written/run
+- Shellcheck passes on `lib/x-agent-common.sh`
+- Source side-effect test: no stdout/stderr on source
+- Function availability: all 9 functions callable after sourcing
+- `need()` exit code: returns 2 for missing tool, passes for existing tool
+- `setup_outdir` cleanup: dir removed on success, preserved on failure, preserved with KEEP_DIR=1
+- `print_result` output format: PASS/FAIL with correct fields
+- `print_overall` output format: Overall PASS/FAIL with Logs: path
+- All 10 existing scenarios pass (shellcheck + 9 agent fixtures)
+
+## Known limitations
+- Existing agents are NOT refactored to use the shared library yet (deferred to spec 02)
+- `run-scenarios.sh` tests don't exercise `lib/x-agent-common.sh` directly; coverage comes from manual smoke tests and future agent adoption
+
+## Exploration notes
+Updated `.ralph/exploration.md`:
+- Added `lib/x-agent-common.sh` to Key Files & Roles
+- Updated install flow description to reflect lib/ handling
+
+## Lessons Applied This Phase
+No prior lessons existed. No new lessons required — implementation was straightforward.
+
+## Suggestions for the REVIEW agent
+- Verify the library API matches what spec 02 will need for refactoring existing agents
+- The `print_result` function signature differs slightly from existing inline patterns (agents currently inline the Result/Fix/log printing); spec 02 should decide whether to adopt `print_result` fully or keep inline patterns for agent-specific formatting (e.g., cargo-agent's JSON diagnostics output)
+- The lock pattern in `setup_lock` matches cargo-agent's existing implementation exactly

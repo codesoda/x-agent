@@ -1,0 +1,19 @@
+DECISION: SHIP
+ITERATION: 3
+SPEC: 01-shared-library-extract.md
+
+SUMMARY:
+Implemented shared-library extraction and install-time library packaging are coherent with the spec’s scope and acceptance criteria for this phase. The runtime helper API in `lib/x-agent-common.sh` is side-effect free on source and aligns with the expected boilerplate extraction boundaries.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+None
+
+MINOR ISSUES:
+- `lib/x-agent-common.sh` currently does not provide a `resolve_lib_dir()` helper; library consumers must rely on caller-local path conventions (`../../../lib`). This is acceptable for this phase but is a slight re-coupling point for future agents when agent script location patterns diverge.
+- `print_result` treats `fix_hint` as optional (`print_result() { ... if [[ -n "$fix_hint" ]]; then Fix ... fi }`) so fail paths can omit guidance unless callers consistently provide one.
+
+NEXT STEPS:
+Proceed to next spec

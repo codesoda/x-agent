@@ -192,6 +192,15 @@ resolve_source_dir() {
   SOURCE_DIR="${TMP_DIR}"
   SOURCE_MODE="remote"
 
+  # Fetch shared library
+  mkdir -p "${SOURCE_DIR}/lib"
+  src_url="${RAW_BASE}/lib/x-agent-common.sh"
+  dest="${SOURCE_DIR}/lib/x-agent-common.sh"
+  info "Fetching lib/x-agent-common.sh..."
+  if ! fetch_to_file "$src_url" "$dest"; then
+    die "Unable to download ${src_url}"
+  fi
+
   # Fetch each selected skill's SKILL.md and scripts
   for skill in $SELECTED_SKILLS; do
     mkdir -p "${SOURCE_DIR}/skills/${skill}/scripts"
@@ -233,6 +242,26 @@ install_skill_to_root() {
     cp -R "${SOURCE_DIR}/skills/${skill}/." "$target/"
     chmod +x "${target}/scripts/"*.sh 2>/dev/null || true
     info "Installed ${skill} to ${target}"
+  fi
+}
+
+# Install the shared library to a skills root so agent scripts can source it.
+# For local installs, symlink the lib/ directory.
+# For remote installs, copy the fetched lib/ directory.
+install_lib_to_root() {
+  root="$1"
+  target="${root}/lib"
+
+  mkdir -p "$root"
+  rm -rf "$target"
+
+  if [ "$SOURCE_MODE" = "local" ]; then
+    ln -s "${SOURCE_DIR}/lib" "$target"
+    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/lib/." "$target/"
+    info "Installed lib to ${target}"
   fi
 }
 
@@ -389,6 +418,7 @@ fi
 
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CLAUDE_SKILLS_DIR}?" yes; then
+    install_lib_to_root "$CLAUDE_SKILLS_DIR"
     for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CLAUDE_SKILLS_DIR" "$skill"
       patch_skill_paths "$CLAUDE_SKILLS_DIR" "$skill"
@@ -400,6 +430,7 @@ fi
 
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CODEX_SKILLS_DIR}?" yes; then
+    install_lib_to_root "$CODEX_SKILLS_DIR"
     for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CODEX_SKILLS_DIR" "$skill"
       patch_skill_paths "$CODEX_SKILLS_DIR" "$skill"

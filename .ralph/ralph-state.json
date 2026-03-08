@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "project_path": "/Users/chrisraethke/projects/x-agent",
+  "current_spec": "01-shared-library-extract.md",
+  "current_phase": "REVIEW",
+  "iteration": 3,
+  "phase_iteration": 1,
+  "status": "ship_pending",
+  "lock_pid": 64465,
+  "start_time": "2026-03-08T13:09:21.080886Z",
+  "last_update": "2026-03-08T16:58:08.071870Z",
+  "phase_history": [
+    {
+      "phase": "PLAN",
+      "iteration": 1,
+      "started_at": "2026-03-08T16:51:47.420754Z",
+      "ended_at": "2026-03-08T16:52:26.597959Z",
+      "outcome": "success",
+      "spec": "01-shared-library-extract.md"
+    },
+    {
+      "phase": "WORK",
+      "iteration": 2,
+      "started_at": "2026-03-08T16:52:26.630261Z",
+      "ended_at": "2026-03-08T16:57:43.903024Z",
+      "outcome": "success",
+      "spec": "01-shared-library-extract.md"
+    },
+    {
+      "phase": "REVIEW",
+      "iteration": 3,
+      "started_at": "2026-03-08T16:57:43.924494Z",
+      "ended_at": "2026-03-08T16:58:08.056863Z",
+      "outcome": "SHIP",
+      "spec": "01-shared-library-extract.md"
+    }
+  ],
+  "total_elapsed_secs": 13726,
+  "specs_completed": [
+    "01-shared-library-extract.md"
+  ],
+  "specs_remaining": [
+    "02-refactor-existing-agents.md",
+    "03-bash-agent.md",
+    "04-go-agent.md",
+    "05-gha-agent.md",
+    "06-helm-agent.md",
+    "07-kube-agent.md",
+    "08-docker-agent.md",
+    "09-ansible-agent.md",
+    "10-sql-agent.md"
+  ]
+}
