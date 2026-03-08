@@ -1,0 +1,106 @@
+name: CI – scenario tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── shellcheck ──────────────────────────────────────────────────────
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck agent scripts
+        run: |
+          shopt -s globstar
+          shellcheck --severity=warning skills/*/scripts/*.sh tests/run-scenarios.sh install.sh
+
+  # ── cargo-agent scenarios ───────────────────────────────────────────
+  cargo-agent:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # baseline: no optional cargo tools
+          - name: baseline
+            install_nextest: false
+            use_nextest: "0"
+
+          # with cargo-nextest
+          - name: with-nextest
+            install_nextest: true
+            use_nextest: "auto"
+
+    name: "cargo-agent (${{ matrix.name }})"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-nextest
+        if: matrix.install_nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run cargo-agent scenarios
+        env:
+          CI: "true"
+          USE_NEXTEST: ${{ matrix.use_nextest }}
+        run: tests/run-scenarios.sh cargo-agent
+
+  # ── npm-agent scenarios ─────────────────────────────────────────────
+  npm-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run npm-agent scenarios
+        env:
+          CI: "true"
+        run: tests/run-scenarios.sh npm-agent
+
+  # ── terra-agent scenarios ───────────────────────────────────────────
+  terra-agent:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # baseline: terraform only
+          - name: baseline
+            install_tflint: false
+
+          # with tflint
+          - name: with-tflint
+            install_tflint: true
+
+    name: "terra-agent (${{ matrix.name }})"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Install tflint
+        if: matrix.install_tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Run terra-agent scenarios
+        env:
+          CI: "true"
+        run: tests/run-scenarios.sh terra-agent
