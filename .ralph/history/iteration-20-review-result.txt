@@ -1,0 +1,26 @@
+DECISION: SHIP
+ITERATION: 8
+SPEC: 06-helm-agent.md
+
+SUMMARY:
+The helm-agent implementation aligns with the spec overall and follows the existing x-agent agent architecture. Core behavior for lint/template execution, chart discovery precedence, and required SKIP/exit semantics is present and consistent.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+None
+
+MINOR ISSUES:
+- [ ] Scope-path testing is under-covered: `tests/helm-agent` currently has only `clean`, `issues`, and `no-chart` scenarios and does not include CHART_DIR/CHANGED_FILES-specific fixture assertions, so FR-3/plan test-strategy branches are not exercised in CI.
+  - `tests/helm-agent/clean/scenario.env:1`
+  - `tests/helm-agent/issues/scenario.env:1`
+  - `tests/helm-agent/no-chart/scenario.env:1`
+- [ ] Multi-chart log path is reported as an unresolved wildcard, which weakens the output contract expectation for actionable `Full log` values.
+  - `skills/helm-agent/scripts/helm-agent.sh:170`
+  - `skills/helm-agent/scripts/helm-agent.sh:200`
+- [ ] The agent script does not use the shared `setup_lock` helper, so concurrent runs are not serialized (unlike some other agents that take advantage of lock).
+  - `skills/helm-agent/scripts/helm-agent.sh:219`
+
+NEXT STEPS:
+Proceed to next spec

@@ -83,3 +83,19 @@
 **Automated Check**: Add a planning/validation rule that parses `.ralph/specs/*-agent.md` for CHANGED_FILES-related requirements and asserts that `tests/<agent>/` contains a dedicated scenario asserting CHANGED_FILES path behavior in addition to clean/issues.
 
 **Status**: PENDING
+
+## [2026-03-08T18:02:17Z] kube-plan-checklist-order
+
+**Frequency**: Every PLAN iteration
+
+**Priority**: HIGH
+
+**Current Issue**: Plan checkers validate checklist shape but not semantic ordering requirements (for example, mandated final two items for exploration updates and final validation gate).
+
+**Manual Check**: Inspect checklist items near the end of `.ralph/work-plan.txt` before starting implementation handoff.
+
+**Automated Check**:
+  - Extend `ralph validate plan` to assert that the final item is the final-gate requirement and the penultimate item is the exploration-update requirement.
+  - Report explicit, actionable line references when ordering is incorrect.
+
+**Status**: PENDING
