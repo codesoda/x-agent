@@ -19,6 +19,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `gha-agent` | GitHub Actions | lint (actionlint) |
 | `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
+| `helm-agent` | Helm | lint, template |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
@@ -60,6 +61,9 @@ path/to/x-agent/skills/gha-agent/scripts/gha-agent.sh
 
 # Go project
 path/to/x-agent/skills/go-agent/scripts/go-agent.sh
+
+# Helm project
+path/to/x-agent/skills/helm-agent/scripts/helm-agent.sh
 
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
@@ -106,6 +110,17 @@ FMT_MODE=fix go-agent.sh fmt  # auto-fix formatting
 ```
 
 `go-agent` uses `gofmt` for formatting (auto-fix locally, check-only in CI), `go vet` for analysis, optional `staticcheck` for linting, and `go test` for tests.
+
+### helm-agent
+
+```sh
+helm-agent.sh              # full suite: lint + template
+helm-agent.sh lint         # helm lint only
+helm-agent.sh template     # helm template only
+CHART_DIR=charts/myapp helm-agent.sh all  # explicit chart directory
+```
+
+`helm-agent` auto-detects chart directories by searching for `Chart.yaml`. Use `CHART_DIR` to override. Reports SKIP when no charts are found.
 
 ### npm-agent
 
@@ -195,6 +210,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 - `/cargo-agent` — run Rust checks
 - `/gha-agent` — run GitHub Actions workflow linting
 - `/go-agent` — run Go checks
+- `/helm-agent` — run Helm chart checks
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks
 - `/terra-agent` — run Terraform checks/fixes

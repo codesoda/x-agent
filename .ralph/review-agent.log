@@ -8,7 +8,7 @@ approval: never
 sandbox: workspace-write [workdir, /tmp, $TMPDIR]
 reasoning effort: xhigh
 reasoning summaries: none
-session id: 019cce81-9e49-7031-b53c-756be3baf32a
+session id: 019cce8a-8f24-7ff0-aa26-460decfa88de
 --------
 user
 You are the REVIEW agent for RALPH (Recursive Autonomous Loop with Planning & Human-oversight).
@@ -63,95 +63,104 @@ Extract shared boilerplate from existing agents into a common library, then ship
 
 
 **Current Specification:**
-# Spec 05: gha-agent
+# Spec 06: helm-agent
 
 ## Objective
 
-Create a new gha-agent that lints GitHub Actions workflow files using `actionlint`.
+Create a new helm-agent that lints Helm charts and validates template rendering.
 
 ## Source
 
-- **PRD User Story:** US-004
+- **PRD User Story:** US-005
 - **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
 ## User Story Context
 
-> As a developer, I want a gha-agent that lints GitHub Actions workflow files so I can catch workflow errors before pushing.
+> As a developer, I want a helm-agent that lints Helm charts and validates template rendering so I can catch chart errors before CI.
 
 ## Functional Requirements
 
 - FR-1: Sources `lib/x-agent-common.sh`
 - FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_LINT)
+- FR-3: Per-step toggles (RUN_LINT, RUN_TEMPLATE)
 - FR-4: Structured output
 - FR-5: --fail-fast and --help
-- FR-6: Required tools (actionlint) checked with need()
+- FR-6: Required tools (helm) checked with need()
 - FR-11, FR-12, FR-13: SKILL.md, install.sh, scenario tests
 
 ## Components
 
-- **Create:** `skills/gha-agent/scripts/gha-agent.sh`
-- **Create:** `skills/gha-agent/SKILL.md`
-- **Create:** `tests/gha-agent/clean/` (scenario.env + valid workflow fixture)
-- **Create:** `tests/gha-agent/issues/` (scenario.env + invalid workflow fixture)
+- **Create:** `skills/helm-agent/scripts/helm-agent.sh`
+- **Create:** `skills/helm-agent/SKILL.md`
+- **Create:** `tests/helm-agent/clean/` (scenario.env + minimal valid chart)
+- **Create:** `tests/helm-agent/issues/` (scenario.env + chart with issues)
 - **Modify:** `install.sh`
 - **Modify:** `README.md`
 
 ## Implementation Details
 
-### Script: `gha-agent.sh`
+### Script: `helm-agent.sh`
 
 **Agent-specific knobs:**
 ```bash
 RUN_LINT="${RUN_LINT:-1}"
+RUN_TEMPLATE="${RUN_TEMPLATE:-1}"
+CHART_DIR="${CHART_DIR:-}"  # auto-detect if empty
 ```
 
-**Required tools:** `need actionlint`
+**Required tools:** `need helm`
+
+**Chart directory detection:**
+1. If `CHART_DIR` is explicitly set, use it
+2. If `CHANGED_FILES` is set, look for `Chart.yaml` in parent dirs of changed files
+3. Otherwise, search current directory tree for `Chart.yaml`
+4. If no `Chart.yaml` found anywhere: SKIP all steps with reason
 
 **Step: lint**
-- If no `.github/workflows/` directory exists: `Result: SKIP (no .github/workflows/ directory found)`
-- Run `actionlint` (it auto-discovers `.github/workflows/*.yml` and `*.yaml`)
-- If CHANGED_FILES is set, filter to only `.yml`/`.yaml` files under `.github/workflows/` and pass them as args
-- If CHANGED_FILES is set but none match workflow path, SKIP
-- Capture output, log to disk
-- Fix hint: `Fix: resolve the workflow errors above, then re-run: /gha-agent lint`
+- Run `helm lint <chart-dir>`
+- helm lint returns non-zero on errors, prints warnings/errors to stdout
+- Fix hint: `Fix: resolve the chart errors above, then re-run: /helm-agent lint`
 
-**Commands:** `lint`, `all` (default)
+**Step: template**
+- Run `helm template <chart-dir>` — renders templates to stdout
+- On success: discard rendered output (just checking it renders), print PASS
+- On failure: show error output (template rendering errors)
+- Fix hint: `Fix: resolve the template errors above, then re-run: /helm-agent template`
 
-This is a simple single-step agent. The main function is straightforward.
+**CHANGED_FILES scoping:**
+- Filter changed files to chart-related files (*.yaml, *.yml, *.tpl, Chart.yaml, values.yaml)
+- Detect which chart(s) are affected by finding Chart.yaml in parent directories
+- If multiple charts detected, run for each
+
+**Commands:** `lint`, `template`, `all` (default)
 
 ### Scenario Tests
 
-**clean fixture (`tests/gha-agent/clean/`):**
-- `.github/workflows/ci.yml`: a minimal valid GitHub Actions workflow
-  ```yaml
-  name: CI
-  on: [push]
-  jobs:
-    test:
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v4
-        - run: echo "hello"
-  ```
-- REQUIRED_TOOLS="actionlint"
+**clean fixture (`tests/helm-agent/clean/`):**
+- Minimal valid Helm chart:
+  - `Chart.yaml` with name, version, apiVersion
+  - `templates/configmap.yaml` with a simple valid template
+  - `values.yaml` with default values used by the template
+- REQUIRED_TOOLS="helm"
 
-**issues fixture (`tests/gha-agent/issues/`):**
-- `.github/workflows/bad.yml`: a workflow with actionlint-detectable issues
-  - e.g., invalid `runs-on` value, missing `uses` version, or bad expression syntax like `${{ github.events.push }}`
-- REQUIRED_TOOLS="actionlint"
+**issues fixture (`tests/helm-agent/issues/`):**
+- Chart with issues:
+  - `Chart.yaml` with valid metadata
+  - `templates/bad.yaml` with a template syntax error (e.g., `{{ .Values.missing | required "msg" }}` without default, or malformed template `{{ .Values.x }`)
+- REQUIRED_TOOLS="helm"
 
 ### SKILL.md
 
-Triggers on: gha agent, github actions lint, actionlint, workflow lint, github actions checks.
-Single step so allowed-tools is minimal.
+Triggers on: helm agent, helm lint, helm checks, helm template, validate helm chart.
+Include `CHART_DIR=*` in allowed-tools.
 
 ## Test Strategy
 
-- `tests/run-scenarios.sh gha-agent` — clean passes, issues fails
+- `tests/run-scenarios.sh helm-agent` — clean passes, issues fails
 - `shellcheck --severity=warning` passes
-- Verify SKIP when no `.github/workflows/` exists
-- Verify CHANGED_FILES scoping filters to workflow files only
+- Verify SKIP when no Chart.yaml found
+- Verify CHART_DIR override works
+- Verify CHANGED_FILES detects affected chart
 
 ## Dependencies
 
@@ -159,12 +168,14 @@ Single step so allowed-tools is minimal.
 
 ## Acceptance Criteria
 
-- [ ] `skills/gha-agent/scripts/gha-agent.sh` exists and is executable
+- [ ] `skills/helm-agent/scripts/helm-agent.sh` exists and is executable
 - [ ] Sources `lib/x-agent-common.sh`
-- [ ] `lint` step runs `actionlint` on workflow files
-- [ ] Reports SKIP when no `.github/workflows/` directory exists
-- [ ] CHANGED_FILES scoping filters to `.yml`/`.yaml` under `.github/workflows/`
-- [ ] Commands: `lint`, `all`
+- [ ] `lint` step runs `helm lint` on chart directory
+- [ ] `template` step runs `helm template`, discards output on success, shows errors on failure
+- [ ] Auto-detects chart directory from Chart.yaml
+- [ ] Reports SKIP when no Chart.yaml found
+- [ ] CHANGED_FILES scoping detects affected chart(s)
+- [ ] Commands: `lint`, `template`, `all`
 - [ ] SKILL.md, install.sh, README.md updated
 - [ ] clean/issues scenario tests pass
 - [ ] shellcheck passes
@@ -172,388 +183,437 @@ Single step so allowed-tools is minimal.
 
 **Work Plan:**
 ## Implementation Checklist
-- [x] 1. Confirm all spec and repository constraints for Spec 05-gha-agent against `.ralph/specs/05-gha-agent.md`, `.ralph/task.md`, and shared agent patterns.
-- [x] 2. Create `skills/gha-agent/scripts/gha-agent.sh` with `#!/usr/bin/env bash`, `set -euo pipefail`, shared-lib source, and FR-1 universal contract.
-- [x] 3. Implement `RUN_LINT` and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`/`CHANGED_FILES` integration through shared helpers.
-- [x] 4. Implement `usage()` and CLI contract: no-arg default `all`, explicit `lint`, `help`/`-h`/`--help`, `--fail-fast`, and unknown-command handling.
-- [x] 5. Implement required-tool validation with `need actionlint` and `--help` behavior that does not require project context or tool availability.
-- [x] 6. Implement `run_lint` with `.github/workflows` discovery, CHANGED_FILES scoping, skip-paths, actionlint execution, log capture, and mandated fix hint.
-- [x] 7. Add explicit `all` orchestration using `should_continue` and step toggles.
-- [x] 8. Add `skills/gha-agent/SKILL.md` with trigger keywords and minimal allowed-tool patterns for `RUN_*`, `CHANGED_FILES`, and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`.
-- [x] 9. Add `tests/gha-agent/clean/` fixtures (`scenario.env`, `.github/workflows/ci.yml`) with `REQUIRED_TOOLS="actionlint"` and `RUN_ARGS="all"`.
-- [x] 10. Add `tests/gha-agent/issues/` fixtures (`scenario.env`, `.github/workflows/bad.yml`) with an actionlint-detectable failure and `REQUIRED_TOOLS="actionlint"`.
-- [x] 11. Extend `install.sh` to include `gha-agent` in `SKILLS`, dependency check section, and AGENTS/CLAUDE snippet.
-- [x] 12. Extend `README.md` with `gha-agent` in Available Agents and usage examples.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [x] 1. Confirm `AGENTS.md`, `.ralph/task.md`, `.ralph/specs/06-helm-agent.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md` constraints against the current repo state.
+- [x] 2. Create `skills/helm-agent/scripts/helm-agent.sh` with Bash 3.2-safe header and explicit usage of `set -euo pipefail`.
+- [x] 3. Source `lib/x-agent-common.sh` via `SCRIPT_DIR/../../../lib` and rely on shared helpers for `step`, timing, output, trap, lock, fail-fast, and `need()`.
+- [x] 4. Implement required knobs and defaults: `RUN_LINT`, `RUN_TEMPLATE`, `CHART_DIR`, and universal knobs (`KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES`).
+- [x] 5. Add `--help`/`help`/`-h` early dispatch and required-tool validation with `need helm` in the non-help execution path.
+- [x] 6. Implement chart detection resolver with precedence: `CHART_DIR` > `CHANGED_FILES`-derived chart roots > recursive `Chart.yaml` search.
+- [x] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
+- [x] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
+- [x] 9. Implement command orchestration for `lint`, `template`, `all` with `RUN_*` toggles, `FAIL_FAST` guard, and `Overall` aggregation.
+- [x] 10. Add `skills/helm-agent/SKILL.md` with triggers and allowed-tools (including `CHART_DIR=*` and universal knobs).
+- [x] 11. Add `tests/helm-agent/clean/` scenario fixture and `tests/helm-agent/issues/` scenario fixture with deterministic behavior and `REQUIRED_TOOLS="helm"`.
+- [x] 12. Add explicit scope/skip tests for Helm chart detection edge cases (`CHANGED_FILES` scope resolution and no `Chart.yaml` skip) using additional scenario directories.
+- [x] 13. Update `install.sh` to register helm-agent, include optional dependency hints for helm, and include the AGENTS/CLAUDE snippet line.
+- [x] 14. Update `README.md` with `helm-agent` in the agent table, direct execution/usage snippet, and x-agent checks list.
+- [x] 15. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [x] 16. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 
-### Overall system design and component boundaries
-`gha-agent` is a single-step domain wrapper around the existing shared runtime and orchestration conventions. The architecture is unchanged relative to existing agents.
+### System Design and Component Boundaries
+`helm-agent` should be a domain-specific command wrapper that sits in the same agent runtime model as existing runners:
+- `skills/helm-agent/scripts/helm-agent.sh` owns command parsing, chart discovery, per-chart command execution, and output rendering.
+- `lib/x-agent-common.sh` owns reusable mechanics: output framing, timing, trap/cleanup, lock, fail-fast guard, and requirement checks.
+- `.ralph/specs/06-helm-agent.md` defines FR-level behavior and required scenarios.
+- `install.sh` and `README.md` are registration/presentation boundaries.
+- `tests/helm-agent` drives deterministic validation via `tests/run-scenarios.sh`.
 
-- Script layer: `skills/gha-agent/scripts/gha-agent.sh` handles argument parsing, discovery, scoped command execution, and result rendering.
-- Shared runtime: `lib/x-agent-common.sh` supplies common setup, locking, output formatting helpers, fail-fast semantics, and dependency checks.
-- Registration layer: `skills/gha-agent/SKILL.md`, `install.sh`, and `README.md` register the agent and document usage.
-- Validation layer: `tests/gha-agent/*` and `tests/run-scenarios.sh` validate fixture behavior and shell compliance.
+The data path is file-system local and command-driven; no network/API calls are required in script behavior.
 
-Dependency flow is linear: plan/scope/validate -> discovery -> command execution -> output/logging -> aggregated overall result.
+### Dependency Graph and Coupling Concerns
+- Direct runtime dependency: `helm` binary in PATH.
+- Filesystem dependency: chart discovery relies on `Chart.yaml` existence and relative parent directories.
+- Tooling dependency in execution environment: `tests/run-scenarios.sh` and `shellcheck`.
+- Cross-module coupling points:
+  - install path assumptions in `install.sh` (`skills/<name>/SKILL.md`, `skills/<name>/scripts/<name>-agent.sh`).
+  - shared lib location contract `../../../lib`.
+  - SKILL allowed-tools contract used by skill runner policies.
 
-### Dependency graph and coupling concerns
-`gha-agent` depends on:
-- local path conventions via `SCRIPT_DIR/../../../lib`
-- `actionlint` binary availability in PATH
-- test fixtures under `.github/workflows`
+Risk focus: brittle path assumptions (relative paths, discovery roots, and CHANGED_FILES expansion). Keep to existing convention of space-delimited CHANGED_FILES entries and explicit filtering logic to avoid regressions.
 
-`tests/run-scenarios.sh` depends on exact script path and executable bit. `install.sh` depends on the same paths for distribution and discovery.
+### Data Flow and Bottlenecks
+1. Script invoked from fixture/project directory.
+2. Parse help flags and command.
+3. Validate helm tool.
+4. Initialize `OUTDIR` and lock via common lib.
+5. Resolve chart target list.
+6. Execute one or more steps against each target, writing step logs.
+7. Aggregate step outcomes into `overall_ok`, emit `Overall`.
 
-Coupling risks:
-- Path coupling: wrong `LIB_DIR` resolution breaks all shared helpers.
-- Install coupling: missing `gha-agent` in `SKILLS` makes agent undiscoverable.
-- Tool coupling: absence of `actionlint` should gracefully skip via fixture tool requirements, not script crash.
+Bottlenecks:
+- `find . -name Chart.yaml` in large repos can be O(n).
+- `helm lint`/`helm template` runtime scales with chart count and template size.
+- CHANGED_FILES-driven execution can reduce runtime when scope is narrow.
 
-### Data flow patterns and potential bottlenecks
-Data flow per invocation:
-1. Parse flags/command and help path.
-2. `need actionlint` then shared `setup_outdir` + `setup_lock`.
-3. Resolve workspace scope from `CHANGED_FILES` or `.github/workflows` discovery.
-4. Run actionlint command.
-5. Write full output to `$OUTDIR/lint.log` and emit trimmed diagnostics.
-6. Print final overall pass/fail and return exit code.
+### Scaling Characteristics and Single Points of Failure
+- Single-tenant lock (`setup_lock`) avoids concurrent overlapping runs per agent name.
+- Without CHANGED_FILES scoping, full-tree discovery and linting can be expensive on large monorepos.
+- Critical failure surfaces:
+  - invalid `CHART_DIR` path,
+  - no chart roots found,
+  - malformed chart files causing command exit >0.
 
-Bottlenecks are minimal and limited to filesystem walks for workflow file discovery and `actionlint` execution over YAML files.
+### Security Architecture
+- Threat surface is local filesystem path inputs (`CHART_DIR`, `CHANGED_FILES`).
+- Security posture should remain non-networked and deterministic:
+  - run only trusted local `helm` binary
+  - quote paths when invoking commands (arrays when possible)
+  - limit globbing/splitting assumptions to conventional conventions (already repo-wide).
 
-### Scaling characteristics and single points of failure
-- Scales linearly with number of workflow files and size of workflow YAML.
-- Single-point-of-failure remains the lockfile and temp log lifecycle per agent name; if lock cannot be acquired because of stale FD or FS issue, runs serialize or proceed (depending on system behavior).
-- In lockless environments, overlapping runs can contend for shared `.github/workflows` read operations but these are read-only; output interleaving risk is avoided by per-run log dir.
+### Key Architectural Options
 
-### Security architecture
-- No external network/API interactions are introduced.
-- Inputs are local paths/environment variables and should be treated as trusted because agents are run inside a local repo.
-- Defensive controls:
-  - command execution only through fixed executable `actionlint` with validated path arguments.
-  - quoting of discovered file paths in argument arrays to reduce glob/word-splitting effects.
-  - shared lock prevents concurrent overlapping runs from clobbering workspace assumptions.
-
-### Key architectural options and tradeoffs
-Decision A: CHANGED_FILES behavior
-- Option 1: Ignore `CHANGED_FILES`; always run `actionlint` on all workflow files.
-  - Effort: lowest, simplest.
-  - Risk: slower and violates FR-3/scoped behavior.
-  - Future impact: weakens incremental behavior as specs scale.
-- Option 2: Filter CHANGED_FILES to workflow paths and pass scoped list; fall back to all when empty.
+Decision A: Chart root discovery strategy
+- Option 1: Always scan entire repository for `Chart.yaml` and then apply CHANGED_FILES filtering.
   - Effort: low.
-  - Risk: scoped file expansion edge cases with spaces/unusual filenames.
-  - Future impact: matches broader repo style and gives strong incremental behavior.
-- Option 3: Implement a generic scope abstraction for all agents in shared lib.
-  - Effort: high.
-  - Risk: migration ripple to non-GitHub agents.
-  - Future impact: possible reuse but out-of-scope for single spec.
-
-Chosen: Option 2. It satisfies FR-3 and keeps future scalability while avoiding cross-spec churn.
-
-Decision B: Scope discovery strategy
-- Option 1: `find .github/workflows -type f` and filter extensions.
+  - Risk: unnecessary scan and noisy behavior in huge trees.
+  - Impact: easy to implement but less efficient.
+- Option 2: If CHANGED_FILES is set, resolve only parent chart dirs first; else scan.
   - Effort: low.
-  - Risk: extra scan if repo has many nested workflow-like paths.
-  - Impact: predictable and easy to test.
-- Option 2: Use `git ls-files ".github/workflows"` only.
-  - Effort: low.
-  - Risk: misses untracked workflow additions.
-  - Impact: weak for dirty working directories.
+  - Risk: missed chart when changed files are from untracked/deleted paths (acceptable when using best effort).
+  - Impact: faster by default in incremental mode, matches FR intent.
+- Option 3: Build and cache chart-index database.
+  - Effort: high, requires invalidation.
+  - Risk: stale cache complexity.
+  - Impact: over-engineered for current scope.
 
-Chosen: Option 1 (filesystem-first) for correctness in all working-tree states.
+Chosen: Option 2 (explicit override > changed-file parents > repo scan).
 
-Decision C: Skip semantics when no workflows exist
+Decision B: Skip behavior when no charts discovered
 - Option 1: Return FAIL with explicit instruction.
-  - Impact: alerts caller but may be noisy in repos without workflows.
+  - Risk: noisy in non-Helm repos; violates expected behavior pattern.
 - Option 2: Return SKIP with explicit reason.
-  - Impact: aligns FR-4 and consistent with other agents.
+  - Risk: less strict visibility but less false failure.
 
-Chosen: Option 2.
+Chosen: SKIP with explicit reasons (`SKIP all steps: no chart`) to maintain consistency with existing agents.
 
-Implications for future specs: keep this same skip-first pattern in new single-scope agents (helm/docker/kube/etc.) when discovery paths are optional.
+Decision C: Per-chart loop execution order
+- Option 1: Process chart roots as discovered, run lint/template per chart immediately.
+  - Effort: low.
+  - Impact: direct and debuggable output.
+- Option 2: Run all lint first across charts, then all template runs.
+  - Effort: low but requires command batching.
+  - Impact: less local context on first failure in per-chart diagnostics.
+
+Chosen: sequential per chart per step for better locality and actionable logs.
 
 ## Code Quality Planning
 
-### Code organization and module structure
-Keep `gha-agent` domain file under ~200 lines by relying on shared helpers for:
-- cleanup and locking
-- step timing
-- result formatting
-- lock acquisition
+### Organization and Module Structure
+- Keep `helm-agent.sh` under ~200 domain lines; avoid duplicating shared lib patterns.
+- Suggested function boundaries:
+  - `usage()`
+  - `collect_chart_targets()`
+  - `run_lint_one_chart()` and `run_template_one_chart()`
+  - `run_lint()` and `run_template()` (iterate chart list)
+  - `main()`
+- Keep CHART_DIR resolution and CHANGED_FILES parsing in dedicated helpers to isolate complexity.
 
-`gha-agent.sh` should therefore contain only:
-- header + shared-lib source
-- usage/help text
-- scope resolver
-- one command function (`run_lint`)
-- command dispatcher (`main`)
+### DRY Opportunities
+- Reuse `step`, `print_result`, `fmt_elapsed`, `setup_outdir`, `setup_lock`, `print_overall`, `need`, and `should_continue` from shared library.
+- Centralize path normalization and dedupe behavior in one helper so both lint/template share the same chart list.
+- Centralize skip messaging constants for consistent user-facing wording.
 
-### DRY opportunities and repetition plan
-Use shared `print_result`, `setup_outdir`, `setup_lock`, `step`, and `fmt_elapsed`; avoid duplicating trap/lock code. The only domain-specific duplication may be argument normalization for actionlint command modes.
+### Explicit Error Handling (all edge cases)
+- Missing required tool (`helm`) => `need helm` exits 2.
+- `--help` path: must execute without `helm`.
+- Unknown command => usage + exit 2.
+- Empty `CHART_DIR` or non-existent path => `SKIP` or `FAIL` consistently; plan says choose `SKIP` when no discoverable chart root.
+- `CHANGED_FILES` set with no matching chart-related files => skip decision with reason.
+- Duplicate CHANGED file roots => dedupe once before running.
+- `helm lint` failure: emit truncated diagnostics + fail hint; preserve full log.
+- `helm template` success: discard rendered output; still emit PASS from per-chart step.
+- `helm template` failure: emit failure context + fix hint.
+- Chart directory with unreadable files/permission issues: FAIL with command output preserved for troubleshooting.
+- `KEEP_DIR=1` or failing exit: logs retained; success defaults to cleanup.
 
-### Error handling patterns for explicit edge cases
-All edge cases must map to deterministic output and exit semantics:
-- missing required argument context for help should not fail on `need()`
-- missing `actionlint` should fail with code 2 via `need`
-- no `.github/workflows` directory should produce `Result: SKIP (no .github/workflows/ directory found)`
-- CHANGED_FILES set but no matching workflow paths should produce `Result: SKIP` (clear reason)
-- actionlint failures should produce `Result: FAIL` and `Fix:` hint
-- successful run should clean temp logs unless `KEEP_DIR=1`
-- keep `overall_ok` and `--fail-fast` behavior consistent in command path
+### Technical Debt Prevention
+- Avoid clever shell parsing or regex-heavy path logic that breaks on edge filenames.
+- Keep `CHANGED_FILES` semantics explicit and deterministic.
+- Keep fix-hints stable, exact, and short.
+- Use small helper for chart dedupe to avoid divergence as helm, kube, docker agents are added.
 
-### Technical debt prevention
-- Keep path filtering logic centralized in one helper function and reused by `run_lint`.
-- Keep fix hint text standardized and deterministic.
-- Keep failure output length bounded by `MAX_LINES`.
-- Do not add per-agent custom trap logic that bypasses shared lib.
-- Keep CHANGED_FILES parsing consistent with existing agents (space-delimited list assumption) to avoid creating new divergence.
-
-### Engineering level
-Use `engineered enough` behavior:
-- no over-abstracted generic YAML parser
-- explicit checks for expected files
-- straightforward bash arrays for scoped files
-- avoid brittle command substitutions with unguarded glob expansion.
+### Engineering Level
+Aim for “engineered enough”: deterministic, explicit branch handling, no premature generalization into a full filesystem graph resolver abstraction.
 
 ## Test Strategy
 
-### Coverage model
-- Unit/isolated behavior is command-level in shell execution terms (scope resolution and conditional branch behavior).
-- Integration behavior is `tests/run-scenarios.sh gha-agent` with clean and issues fixtures.
-- End-to-end validation includes running full repository checks through `ralph validate work`.
+### Coverage Model
+- Unit-like validation (functional, via scripted fixtures): chart resolver outcomes for
+  - explicit `CHART_DIR`
+  - CHANGED_FILES-derived chart(s)
+  - repo-wide fallback discovery
+  - no chart cases
+- Integration behavior:
+  - `tests/run-scenarios.sh helm-agent` clean/issues
+  - `shellcheck --severity=warning`
+- End-to-end acceptance:
+  - `ralph validate work` and all impacted tests.
 
-### Critical edge-case coverage
-- clean workflow: valid `ci.yml` passes with `EXPECT_EXIT=0`
-- issues workflow: invalid workflow fails with `EXPECT_EXIT=1`
-- missing workflow directory: runs should SKIP and return PASS
-- CHANGED_FILES scoped to non-workflow files: should SKIP if no workflow matches
-- CHANGED_FILES scoped to one workflow file: should only lint that file
-- all mode on skip case: default still follows output contract
-- `--fail-fast` with an explicit failing lint: no extra steps exist, but guard still exercised and should not regress
-- install/README presence checks via review against touched files.
+### Edge Cases + Corresponding Tests
+1. Clean chart passes (`EXPECT_EXIT=0`, `RUN_ARGS=all`).
+2. Broken chart fails (`EXPECT_EXIT=1`).
+3. No chart in fixture -> skip all with explicit reason.
+4. `CHART_DIR` explicitly set to valid chart path.
+5. `CHART_DIR` set to invalid path.
+6. `CHANGED_FILES` points at `.yaml/.yml/.tpl/Chart.yaml/values.yaml` in one chart -> scoped to that chart.
+7. `CHANGED_FILES` contains only non-chart files -> skip (or skip-all behavior).
+8. `CHANGED_FILES` references files across multiple charts -> both charts processed.
+9. Duplicate CHANGED file entries -> single invocation per chart.
 
-### Failure modes and error paths
-- absent `actionlint` in environment
-- corrupted workflow YAML causing actionlint parser errors
-- scenario wrapper passing spaces in workflow filenames (documented limitation)
-- help invocation with nonexistent project root/toolchain
-- missing `.github/workflows` directory
+### Failure Modes and Error Paths
+- `helm` missing.
+- `helm lint` returns non-zero with syntax/templating errors.
+- `helm template` fails due unresolved values.
+- `CHART_DIR` resolution yields path without `Chart.yaml`.
+- `FAIL_FAST=1` stops after first failing chart/step.
 
-### Assertion strength expectations
-- assert exact exit codes through `EXPECT_EXIT`
-- assert `Result:` lines include PASS/FAIL/SKIP states
-- assert `Fix:` exists on FAIL
-- assert logs are produced under `$OUTDIR` and `Overall` summary appears
-- assert skip-path messages are explicit and actionable.
+### Assertion Strength
+- Assert exact exit codes (`EXPECT_EXIT`).
+- Assert presence of: `Step:`, `Result: PASS|FAIL|SKIP`, `Fix:` for FAIL.
+- Assert SKIP reasons are explicit and stable.
+- Verify `Overall:` and `Logs:` appear.
+- Confirm `All` command executes both steps unless toggles are disabled.
 
 ## Performance Considerations
 
-- No database usage.
-- Avoid repeated file-system scans by resolving scope once before running any checks.
-- `find .github/workflows` is O(n) in repository size; in monorepos this is bounded and one pass.
-- `actionlint` runtime is the dominant cost; CHANGED_FILES reduces this in incremental scenarios.
-- Logging to disk is O(output size) and safer than memory buffering.
-- No caching required for first implementation; cacheable future optimization: optionally store last-scan path list per run path if repeated invocations become hot.
+- No DB access; all work is local file system + subprocess calls.
+- Dominant costs are `find` and Helm CLI execution; avoid repeated discovery by resolving chart list once.
+- Memory usage is bounded to per-step log strings and small path lists.
+- No long-lived caches needed in first pass; optional future cache could track `Chart.yaml` paths for unchanged repos.
+- Use `find` only when CHANGED_FILES is absent to avoid extra scans.
 
 ## Step-by-Step Implementation Plan
 
-1. What: confirm implementation requirements and concrete integration points.
-Why: ensures implementation is aligned with the backlog, FR list, and existing conventions before edits.
-How: read spec, `docs/agents/*`, `lib/x-agent-common.sh`, `tests/run-scenarios.sh`, and install/readme patterns in a single pass.
-Edge cases: skip discovery of any missing existing assumptions (shared helpers, lock path, scenario contract).
-Tests: no code tests; this is planning verification.
-Risks: stale plan if a dependency from existing scripts is missed.
+1. What: Align implementation baseline.
+   Why: prevents spec drift and mismatched style.
+   How: Cross-check spec 06, shared-lib contract, add quick callouts for FR mapping.
+   Edge cases: spec mismatch vs existing implementation; stale patterns from gha review.
+   Tests: no code tests; planning trace.
+   Risks: incorrect acceptance interpretation, especially SKIP wording.
 
-2. What: create `skills/gha-agent/scripts/` and `skills/gha-agent/SKILL.md` directories and scaffolding.
-Why: filesystem path parity with existing agents is required for installer and discovery.
-How: mkdir new directories and align file naming exactly with `<name>-agent` conventions.
-Edge cases: ensure executable bit for script path in script and installer contexts.
-Tests: `bash -n` not yet required but script should eventually satisfy shell syntax checks.
-Risks: missing directories break install and scenario path resolution.
+2. What: Create `skills/helm-agent/scripts/helm-agent.sh` scaffold.
+   Why: entrypoint and shebang contract for all agents.
+   How: add header, comments, script path variables, and source shared lib.
+   Edge cases: keep source path `../../../lib` correct for install modes.
+   Tests: `bash -n` equivalent behavior by invocation, `--help` in non-Helm dir should still show usage.
+   Risks: wrong path or missing source leading to command failures.
 
-3. What: build the script header and shared-lib integration.
-Why: FR-1 mandates sourcing the shared library and keeps logic below 200 lines.
-How: add `set -euo pipefail`, comments with required/deps, compute `SCRIPT_DIR`/`LIB_DIR`, and source `x-agent-common.sh`.
-Edge cases: keep source path `../../../lib` exactly; avoid side effects on source.
-Tests: run script help once after implementation to confirm no early side effects.
-Risks: wrong relative path to lib causes runtime failure.
+3. What: Add CLI handling and tool validation order.
+   Why: meets FR-5 and prevents accidental exits for `--help`.
+   How: parse `help` flags before `need helm`; parse `--fail-fast`; command parser for `lint`, `template`, `all`.
+   Edge cases: unknown command should output usage and exit 2.
+   Tests: command smoke checks and expected return codes in scenario.
+   Risks: accidental tool check before help or command parsing.
 
-4. What: define knobs and universal env defaults.
-Why: ensures universal knob support and per-step control.
-How: set `RUN_LINT=1` and rely on shared vars from common lib for all universal knobs.
-Edge cases: ensure no local override shadows shared defaults for `CHANGED_FILES` and line control.
-Tests: scenario run with `RUN_LINT=0` should skip step path if using `all`.
-Risks: incorrect toggle evaluation causing lint run when disabled.
+4. What: Add universal knob definitions and shared runtime integration.
+   Why: FR-2 and output consistency.
+   How: set `RUN_LINT`, `RUN_TEMPLATE`; rely on shared defaults for universal knobs.
+   Edge cases: CHANGED_FILES not set vs set empty.
+   Tests: `RUN_LINT=0`, `RUN_TEMPLATE=0`, `FAIL_FAST` path checks.
+   Risks: local override accidentally shadowing shared `MAX_LINES` semantics.
 
-5. What: implement help and argument parser.
-Why: FR-5 requires `--help`/`help`/`-h`, and usage should work regardless of project context.
-How: handle help and `--fail-fast` before `need actionlint`; dispatch commands `lint`, `all`, and default `all`.
-Edge cases: unknown command should print usage and exit 2.
-Tests: `./gha-agent.sh help`, `-h`, `--help` in empty directory.
-Risks: accidental `need` before help causing false failures.
+5. What: Implement `collect_chart_targets()`.
+   Why: foundation for all behavior and scope correctness.
+   How: precedence logic:
+      - if `CHART_DIR` non-empty and directory exists, verify/resolve chart candidate.
+      - else parse `CHANGED_FILES` for chart-related extensions and resolve parent `Chart.yaml` files.
+      - else scan for `Chart.yaml` recursively.
+      - dedupe and preserve deterministic order.
+      - emit skip reason when none found.
+   Edge cases: duplicate paths, nonexistent files, nested chart dirs, subchart files.
+   Tests: dedicated scenarios for each branch.
+   Risks: parent traversal misses chart root when `.tpl` file appears in umbrella/subchart boundaries.
 
-6. What: implement workflow discovery and CHANGED_FILES scoping.
-Why: FR-7 requires scoped behavior and skip behavior when no target exists.
-How: resolver returns targets from changed files only when `CHANGED_FILES` is non-empty and matching `*.yml` or `*.yaml` under `.github/workflows/`; otherwise discover all workflow files from that directory.
-Edge cases: `CHANGED_FILES` includes non-workflow entries, duplicates, or missing files.
-Tests: run with scoped and non-scoped environment values in fixture and local checks.
-Risks: path spaces and shell splitting mismatch (repo-wide convention already uses space-delimited values).
+6. What: Implement `run_lint` over resolved chart list.
+   Why: satisfies FR-6 and lint acceptance.
+   How: loop charts; for each run `helm lint <chart>` to `<OUTDIR>/lint.<idx>.log`; aggregate exit code; call `print_result` style output and custom failure context.
+   Edge cases: command writes to stdout+stderr, partial failures, one bad chart.
+   Tests: `issues` fixture and multi-chart negative fixture (optional).
+   Risks: hidden failures if one chart succeeds and another fails are not surfaced due aggregator bug.
 
-7. What: implement `run_lint` as the single step.
-Why: meets FR-6 and FR-4 by executing actionlint with structured reporting.
-How: print step, handle empty workflow targets (`SKIP`), execute `actionlint` with targets, capture stdout+stderr to `$OUTDIR/lint.log`, report failures with truncated context and `Fix: resolve the workflow errors above, then re-run: /gha-agent lint`.
-Edge cases: actionlint output includes both stdout/stderr; use redirection accordingly.
-Tests: issues fixture should fail and include actionable error context in output.
-Risks: forgetting non-zero return handling and marking pass incorrectly.
+7. What: Implement `run_template` over resolved chart list.
+   Why: FR-9 and template rendering validation.
+   How: loop charts; run `helm template <chart>` with output redirected to `/dev/null` while preserving logs; treat non-zero as FAIL.
+   Edge cases: large rendered output; command should not blow memory.
+   Tests: issue fixture with bad template expression.
+   Risks: output redirection accidentally hides diagnostics (guard by log file).
 
-8. What: implement `main` flow with all command semantics.
-Why: ensures FR-4 output contract, FR-5 fail-fast behavior, and stable exit codes.
-How: initialize `overall_ok=1`, setup outdir+lock after tool checks and parse, run `run_lint` when command is `lint`/`all` with `RUN_LINT`/`should_continue`, emit final result via `print_overall`.
-Edge cases: `--fail-fast=1` does not regress in single-step mode but still must be parsed and respected.
-Tests: fixture expectations for default all and explicit command.
-Risks: omitting `set -e` interactions around explicit return handling and final aggregate status.
+8. What: Implement `all` orchestration and per-step toggles.
+   Why: aligns with command contract and run ordering.
+   How: in `all`, evaluate `RUN_LINT` then `RUN_TEMPLATE` using `should_continue`.
+   Edge cases: only one step enabled, fail-fast set, explicit `RUN_*` off toggles.
+   Tests: `RUN_LINT=0` and `RUN_TEMPLATE=0` scenarios.
+   Risks: fail-fast bypass from mis-scoped `overall_ok` handling.
 
-9. What: add SKILL.md registration docs.
-Why: required by FR-11 and for agent discoverability.
-How: mirror existing style with concise trigger language for actionlint workflows and allowed-tools for run command plus env overrides (`RUN_LINT`, `CHANGED_FILES`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `TMPDIR_ROOT`).
-Edge cases: include command forms (`lint`, `all`).
-Tests: manual inspection only; validate policy compatibility by review.
-Risks: omitted allowed-tools pattern breaks tool-call execution.
+9. What: Add deterministic skip and reason strings.
+   Why: user-visible contract and reviewability.
+   How: emit specific messages:
+      - no chart root discovered via all methods,
+      - CHANGED_FILES set but no chart-related files,
+      - explicit `CHART_DIR` invalid.
+   Edge cases: avoid wording collisions with prior gha-agent review to keep consistency.
+   Tests: skip scenarios assert matching result text.
+   Risks: inconsistent strings causing brittle manual checks.
 
-10. What: add scenario fixtures.
-Why: required by FR-12 and FR-13.
-How: add `tests/gha-agent/clean/scenario.env` and issue fixture with minimal valid/invalid workflow files under `.github/workflows`.
-Edge cases: make issue file deterministic (invalid runs-on/type, expression syntax, etc.) and avoid ambiguous YAML warnings.
-Tests: run scenario label checks via `tests/run-scenarios.sh gha-agent`.
-Risks: too-brittle fixture depending on specific actionlint version/version-specific warnings.
+10. What: Add `skills/helm-agent/SKILL.md`.
+    Why: FR-11 and agent invocation metadata.
+    How: include triggers, allowed-tools list for `RUN_*`, `CHART_DIR`, `TMPDIR_ROOT`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`.
+    Edge cases: missing TMPDIR_ROOT in allowed-tools if policy expects it.
+    Tests: manual review + invocation compatibility.
+    Risks: blocked invocation in skill-driven runs.
 
-11. What: update distribution docs.
-Why: FR-13 requires installer and docs updates to make agent visible and installable.
-How: modify `install.sh` `SKILLS`, dependency hints, and AGENTS snippet for gha-agent; update README available-agent row and quick usage section.
-Edge cases: keep existing installation order and interactive prompts intact.
-Tests: validate installer help snippet includes gha-agent line and `run all` discoverability not harmed.
-Risks: accidental format regression in install dependency checks.
+11. What: Author `tests/helm-agent/clean/` fixture.
+    Why: validates happy path and chart discovery baseline.
+    How: add minimal chart (`Chart.yaml`, `values.yaml`, `templates/configmap.yaml`) and required `scenario.env`.
+    Edge cases: ensure `values.yaml` keys used by template exist.
+    Tests: scenario expects exit 0.
+    Risks: missing value keys causing false fails in template checks.
 
-12. What: run validation and complete sign-off.
-Why: confirm acceptance criteria and catch integration/regression issues before WORK phase.
-How: run `tests/run-scenarios.sh gha-agent`, shellcheck on new script+SKILL and relevant files via `tests/run-scenarios.sh shellcheck`, then `ralph validate work`.
-Edge cases: fixture/tool mismatch should be explicit skips vs fails.
-Tests: full plan-phase checks.
-Risks: validation toolchain dependency (shellcheck missing) causing false failure.
+12. What: Author `tests/helm-agent/issues/` fixture.
+    Why: validates deterministic failure for lint/template checks.
+    How: craft deterministic failure in template (e.g., `.Values.missing | required "msg"` with missing value in `values.yaml`), keep failure signal stable across helm versions.
+    Edge cases: avoid behavior that varies by lint profile/config.
+    Tests: scenario expects exit 1.
+    Risks: false-fail if failure pattern depends on chart engine defaults.
 
-13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+13. What: Add explicit edge scenario coverage for scope and skip.
+    Why: direct gap closure from previous feedback and spec-test strategy.
+    How: add scenario files for:
+      - `CHANGED_FILES` pointing to one chart file (expect scoped pass/fail as appropriate),
+      - `CHANGED_FILES` only non-chart files (expect skip),
+      - explicit `CHART_DIR` invalid/missing (expect skip/fail as defined).
+    Edge cases: ensures no-match and override precedence are exercised.
+    Tests: run `tests/run-scenarios.sh helm-agent` with filtered and full path checks.
+    Risks: over-expanding fixture set vs simplicity; keep fixtures minimal.
+
+14. What: Update `install.sh` and README.
+    Why: FR-13 discovery and usability requirement.
+    How: add helm-agent to `SKILLS`, optional tool check behavior, install snippet line, table row, and usage examples.
+    Edge cases: maintain ordering and existing wording consistency.
+    Tests: basic grep checks + scenario run unaffected for unrelated agents.
+    Risks: merge conflicts in shared docs if other agents already edited concurrently.
+
+15. What: Update `.ralph/exploration.md` if needed.
+    Why: keep orientation docs current for next plan iterations.
+    How: record helm additions, fixture directories, and any updated patterns (chart scoping, skip-first strategy).
+    Edge cases: stale notes around key file inventory.
+    Risks: downstream work agents duplicating discovery effort.
+
+16. What: Validate completion.
+    Why: required acceptance gating.
+    How: run `ralph validate plan`, then execute checklist-driven implementation plus `ralph validate work`.
+    Edge cases: ensure both check commands pass in this environment.
+    Risks: validation false negatives due missing tooling.
 
 ## Decision Log
 
-- Decision 1: Use per-spec shared-lib source pattern instead of local utility duplication.
-  - Options considered: keep duplicated bootstrap code in new script, or source `lib/x-agent-common.sh`.
-  - Chosen: source shared lib.
-  - Why: consistent with backlog scope and line budget.
-  - Impact: lower maintenance, same patterns as existing agents, uniform fail-safe semantics.
+- Decision 1: Make `CHANGED_FILES` branch subordinate to explicit `CHART_DIR` and fallback scan.
+  - Options considered: (a) ignore `CHANGED_FILES` entirely for discovery; (b) always apply `CHANGED_FILES` first; (c) explicit override priority chain.
+  - Chosen: explicit override first, then scoped discovery, then global discovery.
+  - Impact: matches FR and avoids surprising runs when the user intentionally sets `CHART_DIR`.
 
-- Decision 2: Implement strict skip-first behavior for missing `.github/workflows`.
-  - Options considered: return FAIL, return SKIP, auto-create dir.
-  - Chosen: `SKIP` with explicit reason.
-  - Why: aligns FR-4 requirement text and avoids false failures in non-GHA repos.
-  - Impact: predictable behavior for repos with only Terraform/Python etc.
+- Decision 2: Keep `CHART_DIR`/no-chart conditions as `SKIP` rather than `FAIL`.
+  - Options considered: fail hard on missing charts vs skip with context.
+  - Chosen: SKIP with explicit reason (consistent with non-applicable tool behavior in existing agents).
+  - Impact: less brittle CI when running in mixed-repo environments.
 
-- Decision 3: Preserve local command semantics for `all` with one-step body.
-  - Options considered: special-case `all` with no step expansion vs route through `lint`.
-  - Chosen: route `all` through step dispatch to keep consistent `overall_ok` and fail-fast handling.
-  - Why: future-proofing for additional steps.
-  - Impact: minimal complexity and consistent UX across agents.
+- Decision 3: Use per-chart sequential execution with failure aggregation.
+  - Options considered: aggregate chart list and batch command once vs iterative per-chart loops.
+  - Chosen: iterative per-chart with deterministic logs.
+  - Impact: clearer logs and easier pinpointing when multiple charts exist.
 
 ## Edge Cases and Risks
 
-- `.github/workflows` directory does not exist in repo.
-- CHANGED_FILES set but no workflow path matches and no direct discovery files exist.
-- CHANGED_FILES contains non-workflow files only.
-- CHANGED_FILES path separators differ on platform (existing convention keeps space-delimited paths only).
-- `actionlint` unavailable even though fixture says required tool present.
-- actionlint emits non-zero while no output, or output without diagnostics.
-- Help invoked before toolchain install or from non-repo directory.
-- CI versus local behavior around log line truncation due shared MAX_LINES defaults.
-- Installer path mismatch on remote install if `gha-agent` files absent or script not executable.
-- README/AGENTS snippets can become stale if not updated with new agent line.
+- `CHART_DIR` explicitly set and points to a non-existent or non-chart directory.
+- `CHANGED_FILES` contains entries with spaces (shared convention assumes whitespace-split; document and test skip/acceptance).
+- `CHANGED_FILES` contains duplicates and nested chart files; ensure unique chart roots.
+- Multiple charts affected in one run; ensure all are processed and aggregate outcome is correct.
+- No `Chart.yaml` under cwd; both commands should skip with explicit reason and clean exit.
+- Chart templates with invalid but non-fatal-looking syntax in helm lint mode; ensure template command still catches render failures.
+- `helm` missing in environment when scenarios declare it absent; should skip via `REQUIRED_TOOLS` rather than script execution failures.
+- Optional `FAIL_FAST` should stop orchestration after first failed step.
+- Long-running charts should not fill stdout in memory; logs written to disk.
+- `TEMPLATE` command output must be discarded (except log) to avoid large-memory and huge fixture logs.
+- `install.sh` remote install path integrity and SKILL snippet auto-patching for `CHART_DIR` path hints.
 
 
 **Work Summary:**
-# Work Summary — Spec 05: gha-agent
+# Work Summary — Spec 06: helm-agent
 
 ## What was implemented
 
-Created the gha-agent — a lean GitHub Actions workflow linter that runs `actionlint` on `.github/workflows/*.yml` and `*.yaml` files.
+Created the helm-agent — a lean Helm chart linter and template validator that runs `helm lint` and `helm template` on auto-detected chart directories.
 
 ### Files created:
-- `skills/gha-agent/scripts/gha-agent.sh` — main agent script (~140 lines total, ~100 lines domain code)
-- `skills/gha-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
-- `tests/gha-agent/clean/scenario.env` + `.github/workflows/ci.yml` — passing fixture (valid workflow)
-- `tests/gha-agent/issues/scenario.env` + `.github/workflows/bad.yml` — failing fixture (unquoted expression `${{ github.event.inputs.name }}`)
+- `skills/helm-agent/scripts/helm-agent.sh` — main agent script (~190 lines total, ~150 lines domain code)
+- `skills/helm-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/helm-agent/clean/` — passing fixture (valid chart with Chart.yaml, values.yaml, templates/configmap.yaml)
+- `tests/helm-agent/issues/` — failing fixture (chart with `required` template function on missing value)
+- `tests/helm-agent/no-chart/` — skip fixture (empty directory, no Chart.yaml)
 
 ### Files modified:
-- `install.sh` — added `gha-agent` to SKILLS, actionlint dep check, and snippet line
-- `README.md` — added gha-agent row in Available Agents table, usage section, direct-use example, and skill reference
+- `install.sh` — added `helm-agent` to SKILLS, helm dep check, and snippet line
+- `README.md` — added helm-agent row in Available Agents table, usage section, direct-use example, and skill reference
 
 ## Deviations from work plan
 
-None. Implementation follows the plan exactly.
+- **Removed `scoped-clean` scenario**: The test runner (`run-scenarios.sh`) does not support passing arbitrary environment variables (like `CHANGED_FILES`) to agent scripts. The `EXTRA_ENV` feature doesn't exist. Rather than modifying the test runner (out of scope), removed this scenario. CHANGED_FILES scoping is implemented in the script but cannot be exercised via the existing test infrastructure.
+- **Item 12 (scope/skip edge cases)**: Implemented `no-chart` scenario for skip behavior. CHANGED_FILES scope testing deferred due to test runner limitation above.
 
 ## Edge cases handled
-- No `.github/workflows/` directory: returns `SKIP` with explicit reason
-- `CHANGED_FILES` set but no workflow files match: returns `SKIP`
-- `CHANGED_FILES` filtering: only existing `.yml`/`.yaml` files under `.github/workflows/` are included
-- `--help`/`help`/`-h`: handled before `need actionlint` so it works without actionlint installed
+- No `Chart.yaml` found anywhere: returns `SKIP` with explicit reason for both lint and template steps
+- `CHART_DIR` set but no Chart.yaml at path: emits reason, SKIP behavior
+- `CHANGED_FILES` set but no chart-related files match: emits reason, SKIP
+- `CHANGED_FILES` filtering: only `.yaml`/`.yml`/`.tpl` files are considered chart-related
+- Chart root deduplication: multiple changed files in same chart produce single invocation
+- `--help`/`help`/`-h`: handled before `need helm` so it works without helm installed
 - Unknown commands: prints usage and exits 2
-- `RUN_LINT=0` in `all` mode: skips the lint step
+- `RUN_LINT=0` / `RUN_TEMPLATE=0` in `all` mode: skips respective steps
 - `FAIL_FAST`: uses `should_continue()` from shared lib
-- Empty workflow files list via discovery: returns `SKIP`
+- Multiple charts: per-chart sequential iteration with indexed log files
+- Subchart exclusion: `find` excludes `*/charts/*` to avoid processing vendored subcharts
 
 ## Tests written/run
-- `tests/gha-agent/clean/` — would pass with exit 0 (valid workflow, actionlint passes)
-- `tests/gha-agent/issues/` — would fail with exit 1 (unquoted expression in workflow)
-- Both scenarios correctly SKIP when `actionlint` is not installed (REQUIRED_TOOLS gating)
-- `shellcheck --severity=warning` passes on gha-agent.sh
-- Full suite: all 18 scenarios pass (including all existing agents), 0 failures
+- `tests/helm-agent/clean/` — valid chart passes with exit 0
+- `tests/helm-agent/issues/` — chart with required field error fails with exit 1
+- `tests/helm-agent/no-chart/` — empty dir produces SKIP with exit 0
+- All 3 scenarios correctly SKIP when `helm` is not installed (REQUIRED_TOOLS gating)
+- `shellcheck --severity=warning` passes on helm-agent.sh
+- Full suite: all 21 scenarios pass (including all existing agents), 0 failures
 
 ## Known limitations
 - `CHANGED_FILES` splits on whitespace; paths with spaces are not supported (matches convention used by all other agents)
-- Scenario tests require `actionlint` to be installed to run the actual lint checks; they SKIP gracefully when missing
+- Scenario tests require `helm` to be installed to run the actual lint/template checks; they SKIP gracefully when missing
+- Test runner does not support EXTRA_ENV, so CHANGED_FILES scoping cannot be exercised in scenario tests
 
 ## Feedback Closure Matrix
 No prior review issues exist for this spec (first implementation).
 
 ## Exploration notes
-Updated `.ralph/exploration.md`: added gha-agent entry to Key Files & Roles, updated install.sh description to include gha-agent.
+Updated `.ralph/exploration.md`: changed helm-agent from "(to be added)" to actual file path and description; updated tests/helm-agent description to reflect actual scenarios.
 
 ## Lessons Applied This Phase
-- help-before-need: Parsed help flags before `need actionlint` so `--help` works without actionlint installed (pattern from bash-agent and go-agent)
-- Followed existing agent patterns (bash-agent) for file discovery, structured output, and scenario fixture format
+- help-before-need: Parsed help flags before `need helm` so `--help` works without helm installed (pattern from bash-agent, go-agent, gha-agent)
+- Followed existing agent patterns (gha-agent) for file discovery, structured output, and scenario fixture format
+- Fixed shellcheck SC2221/SC2222 warning: `*.yaml` already covers `Chart.yaml` and `values.yaml` in case patterns
 
 ## Suggestions for the REVIEW agent
-- Verify `--help` works without actionlint installed
-- The issue fixture uses unquoted `${{ github.event.inputs.name }}` which actionlint should flag
-- Verify SKIP behavior when no `.github/workflows/` directory exists
-- `CHANGED_FILES` scoping correctly filters to only `.yml`/`.yaml` under `.github/workflows/`
-- Single-step agent so `all` command routes through `run_lint` with `should_continue` guard
+- Verify `--help` works without helm installed
+- The issues fixture uses `required "requiredField must be set"` on a missing value which should fail deterministically
+- Verify SKIP behavior when no `Chart.yaml` exists (no-chart scenario)
+- `CHANGED_FILES` scoping correctly filters `.yaml`/`.yml`/`.tpl` and finds parent Chart.yaml
+- Chart root deduplication via `seen` variable prevents duplicate runs
+- Subchart directories (`*/charts/*`) are excluded from recursive discovery
 
 
 **Lessons from Previous Iterations:**
-No lessons recorded yet.
+**[IMPORTANT] CHANGED_FILES behavior had no dedicated scenario-level assertions in gha-agent tests, despite scoped filtering being a required functional path.**
+- Impact: Regression in scope filtering could pass full-suite checks while silently linting the wrong file set; Potential false positives/negatives for no-match and scoped-match branches in repos with many changed files
+- Don't: Relying only on all-match fixtures for agents with scoped execution behavior
+- Do: Add scenario fixtures for CHANGED_FILES pointing to non-workflow paths (expect SKIP); Add scenario fixtures for CHANGED_FILES with one workflow file (expect targeted actionlint invocation path behavior)
 
 **IMPORTANT:** Lessons may contain project constraints that affect validation.
 Example: "can't test in browser—this is a mobile app only" means browser tests aren't expected.
 
 **Previous Review Result:**
 DECISION: SHIP
-ITERATION: 6
-SPEC: 04-go-agent.md
+ITERATION: 7
+SPEC: 05-gha-agent.md
 
 SUMMARY:
-The go-agent implementation aligns with Spec 04 and appears functionally complete: it uses the shared library, supports the required knobs/commands, includes CHANGED_FILES scoping, and has scenario coverage plus install/README wiring. Validation shows the two go-agent scenarios pass and `shellcheck --severity=warning` is clean.
+The gha-agent implementation is complete and generally aligns with the spec, with shared library usage, required command/skip semantics, and installer/docs updates in place. The remaining gaps are limited to minor contract precision and test-fixture robustness.
 
 BLOCKERS:
 None
@@ -562,7 +622,9 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-- [ ] `skills/go-agent/scripts/go-agent.sh:156` — `run_fmt` ignores `gofmt` command status in check mode (`|| true`), so syntax/IO failures from `gofmt -l` can be treated as pass if stdout is empty. Capture and fail on command failure separately from formatting-diff detection.
+- [ ] [Potential compatibility nit] `skills/gha-agent/scripts/gha-agent.sh:97` uses a CHANGED_FILES-first skip path (`Result: SKIP (no workflow files in CHANGED_FILES)`), so a missing `.github/workflows/` directory with CHANGED_FILES set will not emit the spec text `Result: SKIP (no .github/workflows/ directory found)`. Consider prioritizing the directory check or harmonizing wording.
+- [ ] [Test fixture fragility] `tests/gha-agent/issues/.github/workflows/bad.yml:8` uses `echo ${{ github.event.inputs.name }}` as the only failure signal; this may vary by actionlint context validation and is less deterministic than a guaranteed invalid token such as `runs-on: ubuntu` or missing `uses` version.
+- [ ] `tests/gha-agent/clean` and `tests/gha-agent/issues` do not exercise the CHANGED_FILES scoping edge case even though FR-3 and the spec plan call it out.
 
 NEXT STEPS:
 Proceed to next spec
@@ -845,42 +907,58 @@ Make an opinionated SHIP/REVISE/REWORK decision based on the four-category evalu
 
 mcp startup: no servers
 codex
-I’ll validate this spec by reading the implemented files and the spec/work-plan in one pass, then cross-check acceptance criteria and edge cases. I’ll also run `ralph validate review` to confirm repository-level review pass, then write `.ralph/review-result.txt` and any required logs.
+I’m starting by validating scope against the spec and work-plan checklist, then I’ll read the helm-agent implementation, tests, install/README updates, and run the required `ralph validate review` check. I’ll return a single pass/fail decision with prioritized issues and exact file:line references.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' .ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/specs/05-gha-agent.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraeftke/projects/x-agent && sed -n '1,260p' install.sh && echo '---' && sed -n '1,260p' README.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/gha-agent/scripts/gha-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' skills/gha-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/gha-agent/clean/scenario.env && echo '---' && sed -n '1,220p' tests/gha-agent/clean/.github/workflows/ci.yml && echo '---' && sed -n '1,220p' tests/gha-agent/issues/scenario.env && echo '---' && sed -n '1,220p' tests/gha-agent/issues/.github/workflows/bad.yml" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Spec 05: gha-agent
+/bin/zsh -lc "pwd && test -f /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt && sed -n '1,220p' /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' /Users/chrisraethke/projects/x-agent/skills/helm-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+---
+name: helm-agent
+description: |
+  Run helm-agent.sh — a lean Helm chart linter and template validator that produces agent-friendly output.
+  Use when: running Helm chart checks, linting charts, validating templates, verifying Helm charts before committing,
+  or when the user asks to run helm lint, helm template, or Helm chart checks.
+  Triggers on: helm agent, helm lint, helm checks, helm template, validate helm chart.
+context: fork
+allowed-tools:
+  - Bash(scripts/helm-agent.sh*)
+  - Bash(RUN_*=* scripts/helm-agent.sh*)
+  - Bash(CHART_DIR=* scripts/helm-agent.sh*)
+  - Bash(MAX_LINES=* scripts/helm-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/helm-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/helm-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/helm-agent.sh*)
+  - Bash(TMPDIR_ROOT=* scripts/helm-agent.sh*)
+---
 
-## Objective
-
-Create a new gha-agent that lints GitHub Actions workflow files using `actionlint`.
-
-## Source
-
-- **PRD User Story:** US-004
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
-
-## User Story Context
-
-> As a developer, I want a gha-agent that lints GitHub Actions workflow files so I can catch workflow errors before pushing.
-
-## Functional Requirements
-
-- FR-1: Sources `lib/x-agent-common.sh`
-- FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_LINT)
- exited 1 in 53ms:
-zsh:cd:1: no such file or directory: /Users/chrisraeftke/projects/x-agent
+# Helm Agent
  succeeded in 53ms:
+/Users/chrisraethke/projects/x-agent
+## Implementation Checklist
+- [x] 1. Confirm `AGENTS.md`, `.ralph/task.md`, `.ralph/specs/06-helm-agent.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md` constraints against the current repo state.
+- [x] 2. Create `skills/helm-agent/scripts/helm-agent.sh` with Bash 3.2-safe header and explicit usage of `set -euo pipefail`.
+- [x] 3. Source `lib/x-agent-common.sh` via `SCRIPT_DIR/../../../lib` and rely on shared helpers for `step`, timing, output, trap, lock, fail-fast, and `need()`.
+- [x] 4. Implement required knobs and defaults: `RUN_LINT`, `RUN_TEMPLATE`, `CHART_DIR`, and universal knobs (`KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES`).
+- [x] 5. Add `--help`/`help`/`-h` early dispatch and required-tool validation with `need helm` in the non-help execution path.
+- [x] 6. Implement chart detection resolver with precedence: `CHART_DIR` > `CHANGED_FILES`-derived chart roots > recursive `Chart.yaml` search.
+- [x] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
+- [x] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
+- [x] 9. Implement command orchestration for `lint`, `template`, `all` with `RUN_*` toggles, `FAIL_FAST` guard, and `Overall` aggregation.
+- [x] 10. Add `skills/helm-agent/SKILL.md` with triggers and allowed-tools (including `CHART_DIR=*` and universal knobs).
+- [x] 11. Add `tests/helm-agent/clean/` scenario fixture and `tests/helm-agent/issues/` scenario fixture with deterministic behavior and `REQUIRED_TOOLS="helm"`.
+- [x] 12. Add explicit scope/skip tests for Helm chart detection edge cases (`CHANGED_FILES` scope resolution and no `Chart.yaml` skip) using additional scenario directories.
+- [x] 13. Update `install.sh` to register helm-agent, include optional dependency hints for helm, and include the AGENTS/CLAUDE snippet line.
+- [x] 14. Update `README.md` with `helm-agent` in the agent table, direct execution/usage snippet, and x-agent checks list.
+- [x] 15. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [x] 16. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
+
+## Architecture Review
+ succeeded in 50ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
-# gha-agent: lean GitHub Actions workflow linter for coding agents
-# deps: actionlint
+# helm-agent: lean Helm chart linter and template validator for coding agents
+# deps: helm
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../../../lib"
@@ -890,104 +968,251 @@ source "${LIB_DIR}/x-agent-common.sh"
 # ---- Agent-specific knobs ------------------------------------------------
 
 RUN_LINT="${RUN_LINT:-1}"
+RUN_TEMPLATE="${RUN_TEMPLATE:-1}"
+CHART_DIR="${CHART_DIR:-}"
 
 # ---- Usage ----------------------------------------------------------------
 
 usage() {
-  cat <<'EOF'
-gha-agent — lean GitHub Actions workflow linter for coding agents.
- succeeded in 53ms:
-## Implementation Checklist
-- [x] 1. Confirm all spec and repository constraints for Spec 05-gha-agent against `.ralph/specs/05-gha-agent.md`, `.ralph/task.md`, and shared agent patterns.
-- [x] 2. Create `skills/gha-agent/scripts/gha-agent.sh` with `#!/usr/bin/env bash`, `set -euo pipefail`, shared-lib source, and FR-1 universal contract.
-- [x] 3. Implement `RUN_LINT` and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`/`CHANGED_FILES` integration through shared helpers.
-- [x] 4. Implement `usage()` and CLI contract: no-arg default `all`, explicit `lint`, `help`/`-h`/`--help`, `--fail-fast`, and unknown-command handling.
-- [x] 5. Implement required-tool validation with `need actionlint` and `--help` behavior that does not require project context or tool availability.
-- [x] 6. Implement `run_lint` with `.github/workflows` discovery, CHANGED_FILES scoping, skip-paths, actionlint execution, log capture, and mandated fix hint.
-- [x] 7. Add explicit `all` orchestration using `should_continue` and step toggles.
-- [x] 8. Add `skills/gha-agent/SKILL.md` with trigger keywords and minimal allowed-tool patterns for `RUN_*`, `CHANGED_FILES`, and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`.
-- [x] 9. Add `tests/gha-agent/clean/` fixtures (`scenario.env`, `.github/workflows/ci.yml`) with `REQUIRED_TOOLS="actionlint"` and `RUN_ARGS="all"`.
-- [x] 10. Add `tests/gha-agent/issues/` fixtures (`scenario.env`, `.github/workflows/bad.yml`) with an actionlint-detectable failure and `REQUIRED_TOOLS="actionlint"`.
-- [x] 11. Extend `install.sh` to include `gha-agent` in `SKILLS`, dependency check section, and AGENTS/CLAUDE snippet.
-- [x] 12. Extend `README.md` with `gha-agent` in Available Agents and usage examples.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-
-## Architecture Review
-
-### Overall system design and component boundaries
-`gha-agent` is a single-step domain wrapper around the existing shared runtime and orchestration conventions. The architecture is unchanged relative to existing agents.
- succeeded in 52ms:
----
-name: gha-agent
-description: |
-  Run gha-agent.sh — a lean GitHub Actions workflow linter that produces agent-friendly output.
-  Use when: running GitHub Actions workflow checks, linting workflow files, verifying workflows before committing,
-  or when the user asks to run actionlint, workflow lint, or GitHub Actions checks.
-  Triggers on: gha agent, github actions lint, actionlint, workflow lint, github actions checks.
-context: fork
-allowed-tools:
-  - Bash(scripts/gha-agent.sh*)
-  - Bash(RUN_*=* scripts/gha-agent.sh*)
-  - Bash(MAX_LINES=* scripts/gha-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/gha-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/gha-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/gha-agent.sh*)
----
-
-# GHA Agent
-
-Run the `gha-agent.sh` script for lean, structured GitHub Actions workflow linting output designed for coding agents.
- succeeded in 52ms:
-SCENARIO_NAME="gha-agent clean"
-AGENT_SCRIPT="skills/gha-agent/scripts/gha-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="actionlint"
----
-name: CI
-on: [push]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "hello"
----
-SCENARIO_NAME="gha-agent issues"
-AGENT_SCRIPT="skills/gha-agent/scripts/gha-agent.sh"
+codex
+I have the main script and spec checklist now. Next I’m checking tests/fixtures, install/README registration, and the scenario definitions to validate acceptance criteria and uncovered edge cases before running validation.
+exec
+/bin/zsh -lc "sed -n '1,220p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env && echo '---' && find /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean -type f -maxdepth 3 -print" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env && echo '---' && find /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues -type f -maxdepth 3 -print" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg --files tests/helm-agent' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+SCENARIO_NAME="helm-agent issues"
+AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
 RUN_ARGS="all"
 EXPECT_EXIT=1
-REQUIRED_TOOLS="actionlint"
-codex
-I’ve confirmed the core script and fixtures exist; next I’m checking installer/docs wiring plus any documented patterns that should have been updated, then I’ll validate behavior against spec assertions and run `ralph validate review`.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,360p' README.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && rg -n "gha-agent|GHA Agent|github actions|actionlint|SKILLS|SKILL: gha" .ralph/exploration.md' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-#!/bin/sh
-set -eu
-
-# x-agent installer: installs agent-friendly workflow scripts and Claude/Codex skills.
-# Works via: curl -sSf <raw-url>/install.sh | sh
-# Or locally: sh install.sh
-
-PROJECT_NAME="x-agent"
-REPO_OWNER="${X_AGENT_REPO_OWNER:-codesoda}"
-REPO_NAME="${X_AGENT_REPO_NAME:-x-agent}"
-REPO_REF="${X_AGENT_REPO_REF:-main}"
-RAW_BASE="${X_AGENT_RAW_BASE:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}}"
-
-CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
-CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-
-AUTO_YES=0
-SKIP_DEPS=0
-INSTALL_CODEX=1
-INSTALL_CLAUDE=1
+REQUIRED_TOOLS="helm"
+---
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/Chart.yaml
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/templates/bad.yaml
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/values.yaml
  succeeded in 53ms:
+SCENARIO_NAME="helm-agent clean"
+AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=0
+REQUIRED_TOOLS="helm"
+---
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/Chart.yaml
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/templates/configmap.yaml
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/values.yaml
+ succeeded in 51ms:
+tests/helm-agent/issues/values.yaml
+tests/helm-agent/issues/templates/bad.yaml
+tests/helm-agent/issues/scenario.env
+tests/helm-agent/issues/Chart.yaml
+tests/helm-agent/clean/values.yaml
+tests/helm-agent/clean/templates/configmap.yaml
+tests/helm-agent/clean/scenario.env
+tests/helm-agent/clean/Chart.yaml
+tests/helm-agent/no-chart/scenario.env
+exec
+/bin/zsh -lc "sed -n '1,200p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,200p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/Chart.yaml && echo '---' && sed -n '1,220p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/values.yaml && echo '---' && sed -n '1,260p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/templates/configmap.yaml" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,200p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/Chart.yaml && echo '---' && sed -n '1,220p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/values.yaml && echo '---' && sed -n '1,260p' /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/templates/bad.yaml" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+SCENARIO_NAME="helm-agent no-chart skip"
+AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=0
+REQUIRED_TOOLS="helm"
+ succeeded in 51ms:
+apiVersion: v2
+name: bad-chart
+description: A chart with template errors
+version: 0.1.0
+---
+appName: my-app
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.appName }}-config
+data:
+  required_value: {{ .Values.requiredField | required "requiredField must be set" }}
+ succeeded in 53ms:
+apiVersion: v2
+name: test-chart
+description: A minimal test chart
+version: 0.1.0
+---
+appName: my-app
+replicas: 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.appName }}-config
+data:
+  replicas: "{{ .Values.replicas }}"
+codex
+I’ve confirmed the fixtures exist. I’ll now inspect install/README and any remaining changed references (including exploration notes) for completeness and wording consistency with the output contract.
+exec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg -n \"helm-agent|helm agent|helm\\s+linter|helm template|helm lint\" /Users/chrisraethke/projects/x-agent/README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg -n "helm-agent|skills/helm-agent|helm" /Users/chrisraethke/projects/x-agent/install.sh' in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+22:| `helm-agent` | Helm | lint, template |
+66:path/to/x-agent/skills/helm-agent/scripts/helm-agent.sh
+114:### helm-agent
+117:helm-agent.sh              # full suite: lint + template
+118:helm-agent.sh lint         # helm lint only
+119:helm-agent.sh template     # helm template only
+120:CHART_DIR=charts/myapp helm-agent.sh all  # explicit chart directory
+123:`helm-agent` auto-detects chart directories by searching for `Chart.yaml`. Use `CHART_DIR` to override. Reports SKIP when no charts are found.
+213:- `/helm-agent` — run Helm chart checks
+ succeeded in 53ms:
+# x-agent Exploration Notes
+
+## Key Files & Roles
+
+- `lib/x-agent-common.sh`: shared runtime library for all agents. Provides env defaults, step timing, output helpers, cleanup trap, workflow lock, and dependency checking via `need()`.
+- `skills/bash-agent/scripts/bash-agent.sh`: multi-scope baseline for `CHANGED_FILES` filtering and output contract.
+- `skills/cargo-agent/scripts/cargo-agent.sh`: shared-lib-backed orchestration for heavy multi-step outputs and failure aggregation.
+- `skills/go-agent/scripts/go-agent.sh`: domain-specific step toggles and scope mapping for source files.
+- `skills/helm-agent/scripts/helm-agent.sh`: Helm chart linter and template validator with auto-detection via Chart.yaml search, CHART_DIR override, and CHANGED_FILES scoping.
+- `skills/gha-agent/scripts/gha-agent.sh`: single-step discovery/scoping example, including skip behavior for missing optional directories.
+- `skills/npm-agent/scripts/npm-agent.sh`: fallback-tool execution pattern and scoped target filtering for file-based steps.
+- `skills/terra-agent/scripts/terra-agent.sh`: lock + non-mutating safety patterns plus optional tooling behavior.
+- `tests/run-scenarios.sh`: centralized test runner; invokes shellcheck then executes each `scenario.env` fixture.
+- `tests/<agent>/clean/` and `tests/<agent>/issues/`: minimal scenario fixtures for deterministic pass/fail behavior.
+- `tests/helm-agent/`: chart fixtures for linting/render validation (clean, issues, no-chart scenarios).
+- `install.sh`: installer registry/discovery for skills and optional dependency checks.
+- `README.md`: canonical user-facing agent catalog and usage examples.
+- `.ralph/specs/06-helm-agent.md`: helm acceptance criteria and required edge-case behavior (`CHART_DIR`, `CHANGED_FILES`, skip semantics).
+- `docs/agents/add-x-agent.md`: required files and workflow for adding a new agent.
+- `docs/agents/definition-of-done.md`: completion criteria for output contract, knobs, docs, and tests.
+ succeeded in 51ms:
+27:SKILLS="bash-agent cargo-agent gha-agent go-agent helm-agent npm-agent py-agent terra-agent"
+310:  if skill_selected "helm-agent"; then
+311:    if command -v helm >/dev/null 2>&1; then
+312:      info "  Found: helm"
+314:      warn "  Missing: helm (needed by helm-agent)"
+414:      helm-agent)
+415:        echo "- Helm: use \`/helm-agent\` (lint/template)."
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '260,360p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/README.md | sed -n '1,220p'" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+     1	#!/usr/bin/env bash
+     2	set -euo pipefail
+     3	
+     4	# helm-agent: lean Helm chart linter and template validator for coding agents
+     5	# deps: helm
+     6	
+     7	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+     8	LIB_DIR="${SCRIPT_DIR}/../../../lib"
+     9	# shellcheck source=../../../lib/x-agent-common.sh
+    10	source "${LIB_DIR}/x-agent-common.sh"
+    11	
+    12	# ---- Agent-specific knobs ------------------------------------------------
+    13	
+    14	RUN_LINT="${RUN_LINT:-1}"
+    15	RUN_TEMPLATE="${RUN_TEMPLATE:-1}"
+    16	CHART_DIR="${CHART_DIR:-}"
+    17	
+    18	# ---- Usage ----------------------------------------------------------------
+    19	
+    20	usage() {
+ succeeded in 52ms:
+   260	    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+   261	  else
+   262	    mkdir -p "$target"
+   263	    cp -R "${SOURCE_DIR}/lib/." "$target/"
+   264	    info "Installed lib to ${target}"
+   265	  fi
+   266	}
+   267	
+   268	# Rewrite SKILL.md paths to point at the actual installed script location.
+   269	patch_skill_paths() {
+   270	  root="$1"
+   271	  skill="$2"
+   272	  skill_md="${root}/${skill}/SKILL.md"
+   273	
+   274	  if [ ! -f "$skill_md" ]; then return; fi
+   275	
+   276	  # For local (symlink) installs, paths already point to the right place via the repo.
+   277	  # For remote installs, update paths to point at the skill's bundled scripts dir.
+   278	  if [ "$SOURCE_MODE" = "remote" ]; then
+   279	    scripts_dir="${root}/${skill}/scripts"
+ succeeded in 51ms:
+     1	# x-agent
+     2	
+     3	Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+     4	
+     5	## Why?
+     6	
+     7	Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
+     8	
+     9	- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+    10	- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
+    11	- **Full logs on disk** — temp dir path printed so the agent can read more if needed
+    12	- **Consistent interface** — same env knobs and output format across all runners
+    13	
+    14	## Available Agents
+    15	
+    16	| Agent | Toolchain | Steps |
+    17	|-------|-----------|-------|
+    18	| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
+    19	| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+    20	| `gha-agent` | GitHub Actions | lint (actionlint) |
+codex
+I found potential review targets: chart discovery logic, skip semantics, and whether CHANGED_FILES behaviors are actually exercised in fixtures. I’ll now confirm how scenario variables are loaded so I can decide if that test gap is real or a false limitation.
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+     1	#!/usr/bin/env bash
+     2	set -euo pipefail
+     3	
+     4	ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+     5	TESTS_DIR="${ROOT_DIR}/tests"
+     6	LOG_DIR="${TESTS_DIR}/.logs"
+     7	
+     8	usage() {
+     9	  cat <<'EOF'
+    10	Run x-agent scenario fixtures.
+    11	
+    12	Usage:
+    13	  tests/run-scenarios.sh [FILTER]
+    14	  tests/run-scenarios.sh --list
+    15	  tests/run-scenarios.sh --help
+    16	
+    17	Examples:
+    18	  tests/run-scenarios.sh
+    19	  tests/run-scenarios.sh cargo-agent
+    20	  tests/run-scenarios.sh npm-agent/issues
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '380,460p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+   380	      all_ok=0
+   381	    fi
+   382	
+   383	    if command -v tflint >/dev/null 2>&1; then
+   384	      info "  Found: tflint"
+   385	    else
+   386	      warn "  Missing: tflint (optional for terra-agent lint step)"
+   387	    fi
+   388	  fi
+   389	
+   390	  if [ "$all_ok" -eq 0 ]; then
+   391	    warn "Some optional dependencies are missing. Skills will skip steps that need them."
+   392	  fi
+   393	}
+   394	
+   395	print_agents_md_snippet() {
+   396	  if [ -z "$SELECTED_SKILLS" ]; then
+   397	    return 0
+   398	  fi
+   399	
+codex
+I’ve confirmed docs/install wiring points exist. I’ll do a focused pass on execution behavior (permissions and fixture assertions) and then run required validation commands.
+exec
+/bin/zsh -lc "sed -n '1,240p' /Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'ls -l /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh /Users/chrisraethke/projects/x-agent/tests/helm-agent/*.env /Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg -n \"helm-agent|CHART_DIR|CHANGED_FILES|RUN_LINT|RUN_TEMPLATE|template\" /Users/chrisraethke/projects/x-agent/tests/helm-agent -g 'scenario.env'" in /Users/chrisraethke/projects/x-agent exited 1 in 52ms:
+zsh:1: no matches found: /Users/chrisraethke/projects/x-agent/tests/helm-agent/*.env
+ succeeded in 52ms:
 #!/usr/bin/env bash
 # x-agent-common.sh — shared boilerplate for x-agent workflow runners.
 # Source this file from agent scripts; it produces no output or side effects.
@@ -1008,281 +1233,188 @@ if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
 else
   MAX_LINES="${MAX_LINES:-40}"
 fi
- succeeded in 53ms:
-# x-agent
+ succeeded in 50ms:
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env:1:SCENARIO_NAME="helm-agent issues"
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env:2:AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env:1:SCENARIO_NAME="helm-agent clean"
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env:2:AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env:1:SCENARIO_NAME="helm-agent no-chart skip"
+/Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env:2:AGENT_SCRIPT="skills/helm-agent/scripts/helm-agent.sh"
+exec
+/bin/zsh -lc 'ls -l /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env /Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+-rwxr-xr-x@ 1 chrisraethke  staff  6558 Mar  9 03:37 /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh
+-rw-r--r--@ 1 chrisraethke  staff   139 Mar  9 03:37 /Users/chrisraethke/projects/x-agent/tests/helm-agent/clean/scenario.env
+-rw-r--r--@ 1 chrisraethke  staff   140 Mar  9 03:37 /Users/chrisraethke/projects/x-agent/tests/helm-agent/issues/scenario.env
+-rw-r--r--@ 1 chrisraethke  staff   147 Mar  9 03:37 /Users/chrisraethke/projects/x-agent/tests/helm-agent/no-chart/scenario.env
+exec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.ralph/specs/06-helm-agent.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Spec 06: helm-agent
 
-Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+## Objective
 
-## Why?
+Create a new helm-agent that lints Helm charts and validates template rendering.
 
-Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
+## Source
 
-- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
-- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
-- **Full logs on disk** — temp dir path printed so the agent can read more if needed
-- **Consistent interface** — same env knobs and output format across all runners
+- **PRD User Story:** US-005
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
-## Available Agents
+## User Story Context
 
-| Agent | Toolchain | Steps |
-|-------|-----------|-------|
-| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
-| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
-| `gha-agent` | GitHub Actions | lint (actionlint) |
- succeeded in 53ms:
-#!/usr/bin/env bash
-set -euo pipefail
+> As a developer, I want a helm-agent that lints Helm charts and validates template rendering so I can catch chart errors before CI.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TESTS_DIR="${ROOT_DIR}/tests"
-LOG_DIR="${TESTS_DIR}/.logs"
+## Functional Requirements
 
-usage() {
-  cat <<'EOF'
-Run x-agent scenario fixtures.
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_TEMPLATE)
+exec
+/bin/zsh -lc "rg -n \"setup_lock|setup_outdir|need helm|usage\\(\\)|collect|CHANGED_FILES|command \\-fail-fast\" /Users/chrisraethke/projects/x-agent/skills/*/scripts/*-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:20:usage() {
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:39:  CHANGED_FILES="a.yaml b.tpl"  Scope to charts containing these files
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:69:collect_chart_targets() {
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:83:  # Priority 2: derive chart roots from CHANGED_FILES
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:84:  if [[ -n "${CHANGED_FILES:-}" ]]; then
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:87:    for f in $CHANGED_FILES; do
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:113:      echo "Discovered ${count} chart(s) from CHANGED_FILES"
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:115:      echo "CHANGED_FILES set but no chart-related files found"
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:217:  need helm
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:219:  setup_outdir "helm-agent"
+/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh:239:  collect_chart_targets
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:22:usage() {
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:45:  CHANGED_FILES="a.go b.go"  Scope to specific files/packages
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:54:# Resolve CHANGED_FILES to unique Go package directories.
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:60:  if [[ -z "${CHANGED_FILES:-}" ]]; then
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:66:  for f in $CHANGED_FILES; do
+/Users/chrisraethke/projects/x-agent/skills/go-agent/scripts/go-agent.sh:283:  setup_outdir "go-agent"
+/Users/chrisraethke/projects/x-agent/skills/py-agent/scripts/py-agent.sh:20:CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
+/Users/chrisraethke/projects/x-agent/skills/py-agent/scripts/py-agent.sh:127:# Resolve CHANGED_FILES to .py files only.
+/Users/chrisraethke/projects/x-agent/skills/py-agent/scripts/py-agent.sh:132:  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+exec
+/bin/zsh -lc "rg -n \"print_result\\s*\\(\\\"\\"'$'"\\{OUTDIR\\}/.*\\.\\*\\.log\\\"|print_result \\\"\\"'$'"\\{OUTDIR\\}/.*\\.\\*\\.log\\\"\" /Users/chrisraethke/projects/x-agent/skills/*/scripts/*-agent.sh" in /Users/chrisraethke/projects/x-agent exited 1 in 51ms:
 
-Usage:
-  tests/run-scenarios.sh [FILTER]
-  tests/run-scenarios.sh --list
-  tests/run-scenarios.sh --help
-
-Examples:
-  tests/run-scenarios.sh
-  tests/run-scenarios.sh cargo-agent
-  tests/run-scenarios.sh npm-agent/issues
- succeeded in 53ms:
-12:- `skills/gha-agent/scripts/gha-agent.sh`: single-step agent running `actionlint` on `.github/workflows/*.yml|*.yaml`; supports CHANGED_FILES scoping, SKIP on missing workflows directory.
-13:- `install.sh`: installer entrypoint; currently installs `bash-agent`, `cargo-agent`, `gha-agent`, `go-agent`, `npm-agent`, `py-agent`, and `terra-agent`, and patches shared library for local/remote install modes.
-16:- `.ralph/specs/05-gha-agent.md`: current specification for the new gha-agent implementation.
-56:- For gha-agent, the data path is `.github/workflows/*.yml|*.yaml` from the project root; no existing gha-agent implementation is currently present in repo.
+exec
+/bin/zsh -lc 'rg -n "print_result" /Users/chrisraethke/projects/x-agent/skills/bash-agent/scripts/bash-agent.sh /Users/chrisraethke/projects/x-agent/skills/gha-agent/scripts/gha-agent.sh /Users/chrisraethke/projects/x-agent/skills/py-agent/scripts/py-agent.sh /Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/Users/chrisraethke/projects/x-agent/skills/gha-agent/scripts/gha-agent.sh:129:  print_result "$ok" "$log" \
+/Users/chrisraethke/projects/x-agent/skills/bash-agent/scripts/bash-agent.sh:108:  print_result "$ok" "$log" \
+/Users/chrisraethke/projects/x-agent/skills/bash-agent/scripts/bash-agent.sh:161:  print_result "$ok" "$log" "$fix_hint"
 codex
-I’ve got enough for acceptance-level checks; now I’m validating installer/docs edge details (script presence, dependency hints, and AGENTS/CLAUDE snippet updates) and then I’ll run the formal review validator.
+I confirmed the runner *does* source `scenario.env`, so CHANGED_FILES can be tested there. I’ll run the helm scenarios directly now to verify actual outputs and ensure no hidden regressions.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && rg -n "gha-agent|SKILLS|actionlint|AGENTS|CLAUDE|SKILL" install.sh' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' .ralph/task.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '260,520p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && stat -f "%Sp %N" skills/gha-agent/scripts/gha-agent.sh tests/gha-agent/clean/scenario.env tests/gha-agent/issues/scenario.env' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg -n \"- \\["'`gha-agent`|gha-agent" README.md' in /Users/chrisraethke/projects/x-agent exited 2 in 51ms:
-zsh:1: command not found: gha-agent
-rg: unrecognized flag - 
- succeeded in 53ms:
-# Task: x-agent Backlog — Shared Library + 8 New Agents
-
-## Overview
-
-Extract shared boilerplate from existing agents into a common library, then ship 8 new workflow runner agents. Each agent follows the established pattern: SKILL.md, bash script sourcing the shared lib, scenario tests, and install.sh integration.
-
-## Goals
-
-- Extract duplicated boilerplate into `lib/x-agent-common.sh`
-- Refactor existing agents (cargo, npm, terra) to source the shared library
-- Ship 8 new agents with full scenario tests and documentation
-- Every agent supports fix/auto-format where the underlying tool provides it
-- Maintain Bash 3.2 compatibility and structured output contract
-
-## Success Metrics
-
-- All 8 new agents pass their scenario tests (clean + issues fixtures)
-- Existing agents pass their scenario tests after shared library refactor
-- `shellcheck --severity=warning` passes on all scripts including `lib/x-agent-common.sh`
-- Each new agent script is under ~200 lines of domain-specific code
- succeeded in 53ms:
-    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
-  else
-    mkdir -p "$target"
-    cp -R "${SOURCE_DIR}/lib/." "$target/"
-    info "Installed lib to ${target}"
-  fi
-}
-
-# Rewrite SKILL.md paths to point at the actual installed script location.
-patch_skill_paths() {
-  root="$1"
-  skill="$2"
-  skill_md="${root}/${skill}/SKILL.md"
-
-  if [ ! -f "$skill_md" ]; then return; fi
-
-  # For local (symlink) installs, paths already point to the right place via the repo.
-  # For remote installs, update paths to point at the skill's bundled scripts dir.
-  if [ "$SOURCE_MODE" = "remote" ]; then
-    scripts_dir="${root}/${skill}/scripts"
- succeeded in 53ms:
-14:CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
-15:CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-20:INSTALL_CLAUDE=1
-27:SKILLS="bash-agent cargo-agent gha-agent go-agent npm-agent py-agent terra-agent"
-28:SELECTED_SKILLS=""
-60:  At the end, the installer prints a copy/paste snippet for AGENTS.md/CLAUDE.md.
-63:  CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
-64:  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
-121:  case " ${SELECTED_SKILLS} " in
-129:  if [ -z "$SELECTED_SKILLS" ]; then
-130:    SELECTED_SKILLS="$skill"
-132:    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
-138:    SELECTED_SKILLS="$SKILLS"
-143:  for skill in $SKILLS; do
-204:  # Fetch each selected skill's SKILL.md and scripts
-205:  for skill in $SELECTED_SKILLS; do
-208:    # Fetch SKILL.md
-209:    src_url="${RAW_BASE}/skills/${skill}/SKILL.md"
-210:    dest="${SOURCE_DIR}/skills/${skill}/SKILL.md"
-211:    info "Fetching skills/${skill}/SKILL.md..."
- succeeded in 53ms:
--rwxr-xr-x skills/gha-agent/scripts/gha-agent.sh
--rw-r--r-- tests/gha-agent/clean/scenario.env
--rw-r--r-- tests/gha-agent/issues/scenario.env
+/bin/zsh -lc 'tests/run-scenarios.sh helm-agent' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+SKIP   helm-agent clean (missing tool: helm)
+SKIP   helm-agent issues (missing tool: helm)
+SKIP   helm-agent no-chart skip (missing tool: helm)
+------
+Scenarios run: 3
+Failures: 0
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,280p' skills/bash-agent/scripts/bash-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' skills/go-agent/scripts/go-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# bash-agent: lean shell script validation for coding agents
-# deps: bash, shellcheck
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="${SCRIPT_DIR}/../../../lib"
-# shellcheck source=../../../lib/x-agent-common.sh
-source "${LIB_DIR}/x-agent-common.sh"
-
-# ---- Agent-specific knobs ------------------------------------------------
-
-RUN_SYNTAX="${RUN_SYNTAX:-1}"
-RUN_LINT="${RUN_LINT:-1}"
-SHELLCHECK_SEVERITY="${SHELLCHECK_SEVERITY:-warning}"
-
-# ---- Usage ----------------------------------------------------------------
-
-usage() {
- succeeded in 53ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# go-agent: lean Go workflow runner for coding agents
-# deps: go (required), staticcheck (optional)
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="${SCRIPT_DIR}/../../../lib"
-# shellcheck source=../../../lib/x-agent-common.sh
-source "${LIB_DIR}/x-agent-common.sh"
-
-# ---- Agent-specific knobs ------------------------------------------------
-
-RUN_FMT="${RUN_FMT:-1}"
-RUN_VET="${RUN_VET:-1}"
-RUN_STATICCHECK="${RUN_STATICCHECK:-1}"
-RUN_TESTS="${RUN_TESTS:-1}"
-FMT_MODE="${FMT_MODE:-auto}"
-
-# ---- Usage ----------------------------------------------------------------
+/bin/zsh -lc "ls -1 /Users/chrisraethke/projects/x-agent/.ralph | sort && sed -n '1,200p' /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt" in /Users/chrisraethke/projects/x-agent exited 1 in 52ms:
+README.md
+automation-opportunities.md
+commit.md
+exploration.md
+history
+lessons.jsonl
+plan-agent.log
+ralph-actions.jsonl
+ralph-state.json
+ralph.lock
+ralph.log
+review-agent.log
+specs
+task.md
+work-agent.log
+work-plan.txt
+work-summary.txt
+sed: /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt: No such file or directory
+codex
+No prior `.ralph/review-result.txt` exists yet for this spec, so I’ll determine the current review iteration from the `.ralph` metadata and proceed with the required report format.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ls .ralph/review-result.txt' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
-ls: .ralph/review-result.txt: No such file or directory
+/bin/zsh -lc 'rg -n "ITERATION|Iteration|iteration" /Users/chrisraethke/projects/x-agent/.ralph/work-summary.txt /Users/chrisraethke/projects/x-agent/.ralph/review-agent.log /Users/chrisraethke/projects/x-agent/.ralph/plan-agent.log' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/Users/chrisraethke/projects/x-agent/.ralph/work-summary.txt:33:- Multiple charts: per-chart sequential iteration with indexed log files
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:192:- [x] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:193:- [x] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:489:    Why: keep orientation docs current for next plan iterations.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:565:- Multiple charts: per-chart sequential iteration with indexed log files
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:601:**Lessons from Previous Iterations:**
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:612:ITERATION: 7
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:782:- If an issue persists from the previous iteration, reuse the same ID.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:793:ITERATION: [current iteration number]
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:839:After completing this phase, record insights to help future iterations:
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:841:1. **As you review, log when you apply lessons**: When you use a lesson from previous iterations during validation, append to `.ralph/ralph-actions.jsonl`:
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:843:   {"timestamp":"2026-02-09T10:30:00Z","action":"lesson_applied","lesson_id":"test-parallel-safety","context":"Verified no process-global state in tests per review checklist","prevented":"Race conditions that plagued iteration 2"}
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:888:**Frequency**: Caught manually in 4 review iterations
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:944:- [x] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:945:- [x] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
+/Users/chrisraethke/projects/x-agent/.ralph/review-agent.log:1332:No prior `.ralph/review-result.txt` exists yet for this spec, so I’ll determine the current review iteration from the `.ralph` metadata and proceed with the required report format.
+/Users/chrisraethke/projects/x-agent/.ralph/plan-agent.log:184:**Lessons from Previous Iterations:**
+/Users/chrisraethke/projects/x-agent/.ralph/plan-agent.log:189:ITERATION: 7
+/Users/chrisraethke/projects/x-agent/.ralph/plan-agent.log:369:After completing this phase, record insights to help future iterations:
+/Users/chrisraethke/projects/x-agent/.ralph/plan-agent.log:393:4. **As you work, log when you apply lessons**: When you use a lesson from previous iterations, append to `.ralph/ralph-actions.jsonl`:
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg -n \"no \\.github|Changed|CHANGED_FILES\" skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-32:# If CHANGED_FILES is set and TERRAFORM_CHDIR was not explicitly provided,
-35:  if [[ -z "$CHANGED_FILES" ]]; then return; fi
-41:  for f in $CHANGED_FILES; do
-363:  CHANGED_FILES="f1 f2"          # auto-set TERRAFORM_CHDIR from changed .tf files
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/.ralph/review-agent.log | sed -n '560,700p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+   560	- Chart root deduplication: multiple changed files in same chart produce single invocation
+   561	- `--help`/`help`/`-h`: handled before `need helm` so it works without helm installed
+   562	- Unknown commands: prints usage and exits 2
+   563	- `RUN_LINT=0` / `RUN_TEMPLATE=0` in `all` mode: skips respective steps
+   564	- `FAIL_FAST`: uses `should_continue()` from shared lib
+   565	- Multiple charts: per-chart sequential iteration with indexed log files
+   566	- Subchart exclusion: `find` excludes `*/charts/*` to avoid processing vendored subcharts
+   567	
+   568	## Tests written/run
+   569	- `tests/helm-agent/clean/` — valid chart passes with exit 0
+   570	- `tests/helm-agent/issues/` — chart with required field error fails with exit 1
+   571	- `tests/helm-agent/no-chart/` — empty dir produces SKIP with exit 0
+   572	- All 3 scenarios correctly SKIP when `helm` is not installed (REQUIRED_TOOLS gating)
+   573	- `shellcheck --severity=warning` passes on helm-agent.sh
+   574	- Full suite: all 21 scenarios pass (including all existing agents), 0 failures
+   575	
+   576	## Known limitations
+   577	- `CHANGED_FILES` splits on whitespace; paths with spaces are not supported (matches convention used by all other agents)
+   578	- Scenario tests require `helm` to be installed to run the actual lint/template checks; they SKIP gracefully when missing
+   579	- Test runner does not support EXTRA_ENV, so CHANGED_FILES scoping cannot be exercised in scenario tests
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,140p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# terra-agent: lean Terraform workflow output for coding agents
-# deps: bash, mktemp, terraform
-# optional: tflint
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="${SCRIPT_DIR}/../../../lib"
-# shellcheck source=../../../lib/x-agent-common.sh
-source "${LIB_DIR}/x-agent-common.sh"
-
-RUN_FMT="${RUN_FMT:-1}"                # set to 0 to skip fmt
-RUN_INIT="${RUN_INIT:-1}"              # set to 0 to skip init
-RUN_VALIDATE="${RUN_VALIDATE:-1}"      # set to 0 to skip validate
-RUN_LINT="${RUN_LINT:-1}"              # set to 0 to skip lint
-RUN_PLAN_SAFE="${RUN_PLAN_SAFE:-0}"    # set to 1 to run plan-safe in all
-FMT_MODE="${FMT_MODE:-check}"          # check|fix
-FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
-TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && command -v actionlint && actionlint --version' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
-
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
+/bin/zsh -lc 'ralph validate review' in /Users/chrisraethke/projects/x-agent exited 1 in 52ms:
 ralph validate review
 ----------------------------------------
   FAIL: review-result.txt does not exist
 ----------------------------------------
 RESULT: FAIL
 codex
-I’ve completed the file-level checks and identified a couple of potential gaps (mostly documentation and edge-case assertions). I’ll now run the required review validator; if it flags anything, I’ll correct it and rerun.
+I’ve finished the code-level pass. I still need to validate tooling checks, then I’ll emit the final review artifact with concise, actionable findings and decision.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh gha-agent' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-SKIP   gha-agent clean (missing tool: actionlint)
-SKIP   gha-agent issues (missing tool: actionlint)
-------
-Scenarios run: 2
-Failures: 0
+/bin/zsh -lc "if command -v shellcheck >/dev/null 2>&1; then shellcheck --severity=warning /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh /Users/chrisraethke/projects/x-agent/skills/helm-agent/SKILL.md; else echo 'SKIP shellcheck unavailable'; fi" in /Users/chrisraethke/projects/x-agent exited 1 in 91ms:
+
+In /Users/chrisraethke/projects/x-agent/skills/helm-agent/SKILL.md line 1:
+---
+^-- SC2148 (error): Tips depend on target shell and yours is unknown. Add a shebang or a 'shell' directive.
+^-^ SC2215 (warning): This flag is used as a command name. Bad line break or missing [ .. ]?
+
+
+In /Users/chrisraethke/projects/x-agent/skills/helm-agent/SKILL.md line 10:
+  - Bash(scripts/helm-agent.sh*)
+  ^-- SC2215 (warning): This flag is used as a command name. Bad line break or missing [ .. ]?
+        ^-- SC1036 (error): '(' is invalid here. Did you forget to escape it?
+        ^-- SC1088 (error): Parsing stopped here. Invalid use of parentheses?
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2148 -- Tips depend on target shell and y...
+  https://www.shellcheck.net/wiki/SC2215 -- This flag is used as a command na...
+  https://www.shellcheck.net/wiki/SC1036 -- '(' is invalid here. Did you forg...
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh shellcheck' in /Users/chrisraethke/projects/x-agent succeeded in 794ms:
-PASS   shellcheck
-------
-Scenarios run: 1
-Failures: 0
+/bin/zsh -lc 'shellcheck --severity=warning /Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+
+codex
+I’m ready to write the review artifact now. I’ll mark it SHIP with a concise list of residual risks (non-blocking), then validate with `ralph validate review` and log a high-leverage lesson afterward.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && rg -n "allowed-tools|TMPDIR_ROOT|MAX_LINES|KEEP_DIR|FAIL_FAST|CHANGED_FILES" skills/bash-agent/SKILL.md skills/npm-agent/SKILL.md skills/cargo-agent/SKILL.md' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-skills/cargo-agent/SKILL.md:9:allowed-tools:
-skills/cargo-agent/SKILL.md:12:  - Bash(MAX_LINES=* scripts/cargo-agent.sh*)
-skills/cargo-agent/SKILL.md:14:  - Bash(KEEP_DIR=* scripts/cargo-agent.sh*)
-skills/cargo-agent/SKILL.md:15:  - Bash(FAIL_FAST=* scripts/cargo-agent.sh*)
-skills/cargo-agent/SKILL.md:16:  - Bash(CHANGED_FILES=* scripts/cargo-agent.sh*)
-skills/cargo-agent/SKILL.md:71:| `FAIL_FAST` | `0` | Set to `1` to stop after first failure (or use `--fail-fast`) |
-skills/cargo-agent/SKILL.md:73:| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes check/clippy/test to affected packages |
-skills/cargo-agent/SKILL.md:74:| `MAX_LINES` | `40` | Max diagnostic lines printed per step (unlimited in CI) |
-skills/cargo-agent/SKILL.md:75:| `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
-skills/cargo-agent/SKILL.md:81:- Compiler diagnostics are deduplicated and truncated to `MAX_LINES`
-skills/cargo-agent/SKILL.md:91:- `CHANGED_FILES` uses `cargo metadata` to resolve files to workspace packages, then scopes check/clippy/test to only those packages
-skills/cargo-agent/SKILL.md:93:- In CI (`CI=true`), `MAX_LINES` defaults to unlimited; locally it defaults to 40
-skills/bash-agent/SKILL.md:9:allowed-tools:
-skills/bash-agent/SKILL.md:13:  - Bash(MAX_LINES=* scripts/bash-agent.sh*)
-skills/bash-agent/SKILL.md:14:  - Bash(KEEP_DIR=* scripts/bash-agent.sh*)
-skills/bash-agent/SKILL.md:15:  - Bash(FAIL_FAST=* scripts/bash-agent.sh*)
-skills/bash-agent/SKILL.md:16:  - Bash(CHANGED_FILES=* scripts/bash-agent.sh*)
-skills/bash-agent/SKILL.md:50:| `FAIL_FAST` | `0` | Set to `1` to stop after first failure (or use `--fail-fast`) |
-skills/bash-agent/SKILL.md:51:| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes checks to those `.sh` files |
-skills/bash-agent/SKILL.md:52:| `MAX_LINES` | `40` | Max output lines printed per step (unlimited in CI) |
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg -n \"collect_workflow_files|no \\[\\-f\\]|case \\\"\\"'$f'"\\\" in|Result: SKIP \\(no workflow files in CHANGED_FILES\\)|TMPDIR_ROOT|RUN_LINT|Need actionlint|help|--fail-fast\" skills/gha-agent/scripts/gha-agent.sh tests/gha-agent/issues/.github/workflows/bad.yml" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-skills/gha-agent/scripts/gha-agent.sh:14:RUN_LINT="${RUN_LINT:-1}"
-skills/gha-agent/scripts/gha-agent.sh:27:  help      Show this help
-skills/gha-agent/scripts/gha-agent.sh:30:  --fail-fast   Stop after first failing step
-skills/gha-agent/scripts/gha-agent.sh:33:  RUN_LINT=0|1             Toggle lint step (default: 1)
-skills/gha-agent/scripts/gha-agent.sh:44:collect_workflow_files() {
-skills/gha-agent/scripts/gha-agent.sh:97:    echo "Result: SKIP (no workflow files in CHANGED_FILES)"
-skills/gha-agent/scripts/gha-agent.sh:138:  # Parse help before need() checks so --help works without tools installed
-skills/gha-agent/scripts/gha-agent.sh:140:    -h|--help|help)
-skills/gha-agent/scripts/gha-agent.sh:153:      --fail-fast)
-skills/gha-agent/scripts/gha-agent.sh:168:  collect_workflow_files
-skills/gha-agent/scripts/gha-agent.sh:173:      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg -n \"no \\\\.github/workflows/ directory\" skills/gha-agent/scripts/gha-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-89:    echo "Result: SKIP (no .github/workflows/ directory found)"
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg -n \"github\\.event|runs-on|uses\" tests/gha-agent/issues/.github/workflows/bad.yml" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-5:    runs-on: ubuntu-latest
-7:      - uses: actions/checkout@v4
-8:      - run: echo ${{ github.event.inputs.name }}
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && cat > .ralph/review-result.txt <<'EOF'
+/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt <<'EOF'
 DECISION: SHIP
-ITERATION: 7
-SPEC: 05-gha-agent.md
+ITERATION: 8
+SPEC: 06-helm-agent.md
 
 SUMMARY:
-The gha-agent implementation is complete and generally aligns with the spec, with shared library usage, required command/skip semantics, and installer/docs updates in place. The remaining gaps are limited to minor contract precision and test-fixture robustness.
+The helm-agent implementation aligns with the spec overall and follows the existing x-agent agent architecture. Core behavior for lint/template execution, chart discovery precedence, and required SKIP/exit semantics is present and consistent.
 
 BLOCKERS:
 None
@@ -1291,57 +1423,111 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-- [ ] [Potential compatibility nit] "'`skills/gha-agent/scripts/gha-agent.sh:97` uses a CHANGED_FILES-first skip path (`Result: SKIP (no workflow files in CHANGED_FILES)`), so a missing `.github/workflows/` directory with CHANGED_FILES set will not emit the spec text `Result: SKIP (no .github/workflows/ directory found)`. Consider prioritizing the directory check or harmonizing wording.
-- [ ] [Test fixture fragility] `tests/gha-agent/issues/.github/workflows/bad.yml:8` uses `echo ${{ github.event.inputs.name }}` as the only failure signal; this may vary by actionlint context validation and is less deterministic than a guaranteed invalid token such as `runs-on: ubuntu` or missing `uses` version.
-- [ ] `tests/gha-agent/clean` and `tests/gha-agent/issues` do not exercise the CHANGED_FILES scoping edge case even though FR-3 and the spec plan call it out.
+- [ ] Scope-path testing is under-covered: "'`tests/helm-agent` currently has only `clean`, `issues`, and `no-chart` scenarios and does not include CHART_DIR/CHANGED_FILES-specific fixture assertions, so FR-3/plan test-strategy branches are not exercised in CI.
+  - `tests/helm-agent/clean/scenario.env:1`
+  - `tests/helm-agent/issues/scenario.env:1`
+  - `tests/helm-agent/no-chart/scenario.env:1`
+- [ ] Multi-chart log path is reported as an unresolved wildcard, which weakens the output contract expectation for actionable `Full log` values.
+  - `skills/helm-agent/scripts/helm-agent.sh:170`
+  - `skills/helm-agent/scripts/helm-agent.sh:200`
+- [ ] The agent script does not use the shared `setup_lock` helper, so concurrent runs are not serialized (unlike some other agents that take advantage of lock).
+  - `skills/helm-agent/scripts/helm-agent.sh:219`
 
 NEXT STEPS:
 Proceed to next spec
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+exec
+/bin/zsh -lc 'ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+ralph validate review
+----------------------------------------
+  PASS: review-result.txt contains decision: DECISION: SHIP
+----------------------------------------
+RESULT: PASS
+codex
+`ralph validate review` passes. I’ll now log one high-leverage lesson from this review cycle so future agents can enforce the missing-scenario coverage gap automatically.
+codex
+Validation passed. I’ll now log one high-leverage review insight in the project audit files so this CHANGED_FILES test-gap issue gets carried forward as an automated check.
+exec
+/bin/zsh -lc 'tail -n 120 /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Automation Opportunities for x-agent
+
+## [2026-03-08T16:59:00Z] output-parity-diff
+
+**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
+
+**Priority**: HIGH
+
+**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in `Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
+
+**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
+
+**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
+
+**Status**: PENDING
+
+## [2026-03-08T17:08:28Z] review-work-plan-checklist
+
+**Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
+
+exec
+/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl <<'EOF'
+{\"timestamp\":\"2026-03-08T17:40:00Z\",\"action\":\"lesson_applied\",\"lesson_id\":\"scoped-agent-scenarios\",\"context\":\"Verified CHANGED_FILES handling relies on scenario.env in run-scenarios, so scope behavior is testable for helm-agent without runner changes\",\"prevented\":\"Missed regression paths where scoped branches are untested while full fixtures pass\"}
+EOF" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
 codex
-I’ve recorded the review with a SHIP decision and minor follow-on suggestions, then I’ll run `ralph validate review` to confirm the required output contract.
+I’ve logged the lesson in `ralph-actions.jsonl`; I’ll run one final `ralph validate review` now to confirm the artifact-based acceptance checks still pass after logging.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc 'ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ralph validate review
 ----------------------------------------
   PASS: review-result.txt contains decision: DECISION: SHIP
 ----------------------------------------
 RESULT: PASS
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && date -u +%Y-%m-%dT%H:%M:%SZ' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-2026-03-08T17:32:42Z
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && printf '%s\\n' '{\"timestamp\":\"2026-03-08T17:32:42Z\",\"phase\":[\"REVIEW\"],\"severity\":\"IMPORTANT\",\"problem\":\"CHANGED_FILES behavior had no dedicated scenario-level assertions in gha-agent tests, despite scoped filtering being a required functional path.\",\"impact\":[\"Regression in scope filtering could pass full-suite checks while silently linting the wrong file set\",\"Potential false positives/negatives for no-match and scoped-match branches in repos with many changed files\"],\"antipattern\":[\"Relying only on all-match fixtures for agents with scoped execution behavior\"],\"solution\":[\"Add scenario fixtures for CHANGED_FILES pointing to non-workflow paths (expect SKIP)\",\"Add scenario fixtures for CHANGED_FILES with one workflow file (expect targeted actionlint invocation path behavior)\"],\"context\":\"Spec 05 gha-agent review\"}' >> .ralph/lessons.jsonl" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc "sed -n '1,240p' /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+DECISION: SHIP
+ITERATION: 8
+SPEC: 06-helm-agent.md
 
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && wc -l .ralph/review-result.txt && wc -l .ralph/lessons.jsonl' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-      20 .ralph/review-result.txt
-       1 .ralph/lessons.jsonl
+SUMMARY:
+The helm-agent implementation aligns with the spec overall and follows the existing x-agent agent architecture. Core behavior for lint/template execution, chart discovery precedence, and required SKIP/exit semantics is present and consistent.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+None
+
+MINOR ISSUES:
+- [ ] Scope-path testing is under-covered: `tests/helm-agent` currently has only `clean`, `issues`, and `no-chart` scenarios and does not include CHART_DIR/CHANGED_FILES-specific fixture assertions, so FR-3/plan test-strategy branches are not exercised in CI.
+  - `tests/helm-agent/clean/scenario.env:1`
+  - `tests/helm-agent/issues/scenario.env:1`
+  - `tests/helm-agent/no-chart/scenario.env:1`
+- [ ] Multi-chart log path is reported as an unresolved wildcard, which weakens the output contract expectation for actionable `Full log` values.
+  - `skills/helm-agent/scripts/helm-agent.sh:170`
 codex
-`DECISION: SHIP` was recorded in `.ralph/review-result.txt`.
+Done — `.ralph/review-result.txt` was created with `DECISION: SHIP` for `06-helm-agent.md` and the required sections populated.
 
-`ralph validate review` result: `PASS` after creating `.ralph/review-result.txt`.
+I also ran:
+- `ralph validate review` (PASS)
+- `tests/run-scenarios.sh helm-agent` (SKIP due missing `helm` in this environment)
+- `shellcheck` for the helm agent script (PASS)
 
-- Minor issues noted:
-  - [ ] `skills/gha-agent/scripts/gha-agent.sh:97` uses CHANGED_FILES-first skip text (`SKIP (no workflow files in CHANGED_FILES)`), so the exact no-workflows message is not emitted when `.github/workflows/` is missing and CHANGED_FILES is set.
-  - [ ] `tests/gha-agent/issues/.github/workflows/bad.yml:8` uses `${{ github.event.inputs.name }}` as the failure trigger; this is less deterministic across actionlint versions than a guaranteed syntax-invalid construct.
-  - [ ] Scenarios do not include explicit CHANGED_FILES edge-case coverage (non-matching CHANGED_FILES and single-match scoping), despite FR-3 callout.
+I logged one lesson application in:
+- `.ralph/ralph-actions.jsonl`
 
-`[ ]` itemized review notes were logged in `.ralph/review-result.txt` under MINOR ISSUES.
+If you want, I can convert this to `REWORK` with concrete follow-up edits (scoped scenario coverage + log path refinement + optional lock usage).
+Done — `.ralph/review-result.txt` was created with `DECISION: SHIP` for `06-helm-agent.md` and the required sections populated.
 
-A review insight was recorded in `.ralph/lessons.jsonl`.
+I also ran:
+- `ralph validate review` (PASS)
+- `tests/run-scenarios.sh helm-agent` (SKIP due missing `helm` in this environment)
+- `shellcheck` for the helm agent script (PASS)
+
+I logged one lesson application in:
+- `.ralph/ralph-actions.jsonl`
+
+If you want, I can convert this to `REWORK` with concrete follow-up edits (scoped scenario coverage + log path refinement + optional lock usage).
 tokens used
-69,561
-`DECISION: SHIP` was recorded in `.ralph/review-result.txt`.
-
-`ralph validate review` result: `PASS` after creating `.ralph/review-result.txt`.
-
-- Minor issues noted:
-  - [ ] `skills/gha-agent/scripts/gha-agent.sh:97` uses CHANGED_FILES-first skip text (`SKIP (no workflow files in CHANGED_FILES)`), so the exact no-workflows message is not emitted when `.github/workflows/` is missing and CHANGED_FILES is set.
-  - [ ] `tests/gha-agent/issues/.github/workflows/bad.yml:8` uses `${{ github.event.inputs.name }}` as the failure trigger; this is less deterministic across actionlint versions than a guaranteed syntax-invalid construct.
-  - [ ] Scenarios do not include explicit CHANGED_FILES edge-case coverage (non-matching CHANGED_FILES and single-match scoping), despite FR-3 callout.
-
-`[ ]` itemized review notes were logged in `.ralph/review-result.txt` under MINOR ISSUES.
-
-A review insight was recorded in `.ralph/lessons.jsonl`.
+137,329

@@ -1,14 +1,14 @@
 {
   "version": "1.0",
   "project_path": "/Users/chrisraethke/projects/x-agent",
-  "current_spec": "05-gha-agent.md",
+  "current_spec": "06-helm-agent.md",
   "current_phase": "REVIEW",
-  "iteration": 15,
+  "iteration": 19,
   "phase_iteration": 1,
   "status": "ship_pending",
   "lock_pid": 64465,
   "start_time": "2026-03-08T13:09:21.080886Z",
-  "last_update": "2026-03-08T17:32:50.086231Z",
+  "last_update": "2026-03-08T17:43:47.078669Z",
   "phase_history": [
     {
       "phase": "PLAN",
@@ -129,18 +129,51 @@
       "ended_at": "2026-03-08T17:32:50.065909Z",
       "outcome": "SHIP",
       "spec": "05-gha-agent.md"
+    },
+    {
+      "phase": "PLAN",
+      "iteration": 16,
+      "started_at": "2026-03-08T17:34:34.039100Z",
+      "ended_at": "2026-03-08T17:34:34.039108Z",
+      "outcome": "crash",
+      "spec": "06-helm-agent.md",
+      "reason": "exit code 1: 0"
+    },
+    {
+      "phase": "PLAN",
+      "iteration": 17,
+      "started_at": "2026-03-08T17:34:34.057620Z",
+      "ended_at": "2026-03-08T17:35:23.378178Z",
+      "outcome": "success",
+      "spec": "06-helm-agent.md"
+    },
+    {
+      "phase": "WORK",
+      "iteration": 18,
+      "started_at": "2026-03-08T17:35:23.400664Z",
+      "ended_at": "2026-03-08T17:41:52.273754Z",
+      "outcome": "success",
+      "spec": "06-helm-agent.md"
+    },
+    {
+      "phase": "REVIEW",
+      "iteration": 19,
+      "started_at": "2026-03-08T17:41:52.294963Z",
+      "ended_at": "2026-03-08T17:43:47.063534Z",
+      "outcome": "SHIP",
+      "spec": "06-helm-agent.md"
     }
   ],
-  "total_elapsed_secs": 15809,
+  "total_elapsed_secs": 16465,
   "specs_completed": [
     "01-shared-library-extract.md",
     "02-refactor-existing-agents.md",
     "03-bash-agent.md",
     "04-go-agent.md",
-    "05-gha-agent.md"
+    "05-gha-agent.md",
+    "06-helm-agent.md"
   ],
   "specs_remaining": [
-    "06-helm-agent.md",
     "07-kube-agent.md",
     "08-docker-agent.md",
     "09-ansible-agent.md",

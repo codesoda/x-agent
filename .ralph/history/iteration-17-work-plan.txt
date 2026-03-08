@@ -1,20 +1,20 @@
 ## Implementation Checklist
-- [x] 1. Confirm `AGENTS.md`, `.ralph/task.md`, `.ralph/specs/06-helm-agent.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md` constraints against the current repo state.
-- [x] 2. Create `skills/helm-agent/scripts/helm-agent.sh` with Bash 3.2-safe header and explicit usage of `set -euo pipefail`.
-- [x] 3. Source `lib/x-agent-common.sh` via `SCRIPT_DIR/../../../lib` and rely on shared helpers for `step`, timing, output, trap, lock, fail-fast, and `need()`.
-- [x] 4. Implement required knobs and defaults: `RUN_LINT`, `RUN_TEMPLATE`, `CHART_DIR`, and universal knobs (`KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES`).
-- [x] 5. Add `--help`/`help`/`-h` early dispatch and required-tool validation with `need helm` in the non-help execution path.
-- [x] 6. Implement chart detection resolver with precedence: `CHART_DIR` > `CHANGED_FILES`-derived chart roots > recursive `Chart.yaml` search.
-- [x] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
-- [x] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
-- [x] 9. Implement command orchestration for `lint`, `template`, `all` with `RUN_*` toggles, `FAIL_FAST` guard, and `Overall` aggregation.
-- [x] 10. Add `skills/helm-agent/SKILL.md` with triggers and allowed-tools (including `CHART_DIR=*` and universal knobs).
-- [x] 11. Add `tests/helm-agent/clean/` scenario fixture and `tests/helm-agent/issues/` scenario fixture with deterministic behavior and `REQUIRED_TOOLS="helm"`.
-- [x] 12. Add explicit scope/skip tests for Helm chart detection edge cases (`CHANGED_FILES` scope resolution and no `Chart.yaml` skip) using additional scenario directories.
-- [x] 13. Update `install.sh` to register helm-agent, include optional dependency hints for helm, and include the AGENTS/CLAUDE snippet line.
-- [x] 14. Update `README.md` with `helm-agent` in the agent table, direct execution/usage snippet, and x-agent checks list.
-- [x] 15. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 16. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
+- [ ] 1. Confirm `AGENTS.md`, `.ralph/task.md`, `.ralph/specs/06-helm-agent.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md` constraints against the current repo state.
+- [ ] 2. Create `skills/helm-agent/scripts/helm-agent.sh` with Bash 3.2-safe header and explicit usage of `set -euo pipefail`.
+- [ ] 3. Source `lib/x-agent-common.sh` via `SCRIPT_DIR/../../../lib` and rely on shared helpers for `step`, timing, output, trap, lock, fail-fast, and `need()`.
+- [ ] 4. Implement required knobs and defaults: `RUN_LINT`, `RUN_TEMPLATE`, `CHART_DIR`, and universal knobs (`KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES`).
+- [ ] 5. Add `--help`/`help`/`-h` early dispatch and required-tool validation with `need helm` in the non-help execution path.
+- [ ] 6. Implement chart detection resolver with precedence: `CHART_DIR` > `CHANGED_FILES`-derived chart roots > recursive `Chart.yaml` search.
+- [ ] 7. Implement `lint` command as `helm lint` with per-chart iteration, log capture, and strict `Fix: resolve the chart errors above, then re-run: /helm-agent lint`.
+- [ ] 8. Implement `template` command as `helm template` with per-chart iteration, output discard on success, and strict failure log reporting with `Fix: resolve the template errors above, then re-run: /helm-agent template`.
+- [ ] 9. Implement command orchestration for `lint`, `template`, `all` with `RUN_*` toggles, `FAIL_FAST` guard, and `Overall` aggregation.
+- [ ] 10. Add `skills/helm-agent/SKILL.md` with triggers and allowed-tools (including `CHART_DIR=*` and universal knobs).
+- [ ] 11. Add `tests/helm-agent/clean/` scenario fixture and `tests/helm-agent/issues/` scenario fixture with deterministic behavior and `REQUIRED_TOOLS="helm"`.
+- [ ] 12. Add explicit scope/skip tests for Helm chart detection edge cases (`CHANGED_FILES` scope resolution and no `Chart.yaml` skip) using additional scenario directories.
+- [ ] 13. Update `install.sh` to register helm-agent, include optional dependency hints for helm, and include the AGENTS/CLAUDE snippet line.
+- [ ] 14. Update `README.md` with `helm-agent` in the agent table, direct execution/usage snippet, and x-agent checks list.
+- [ ] 15. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 16. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 

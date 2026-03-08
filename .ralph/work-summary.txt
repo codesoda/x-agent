@@ -1,57 +1,66 @@
-# Work Summary — Spec 05: gha-agent
+# Work Summary — Spec 06: helm-agent
 
 ## What was implemented
 
-Created the gha-agent — a lean GitHub Actions workflow linter that runs `actionlint` on `.github/workflows/*.yml` and `*.yaml` files.
+Created the helm-agent — a lean Helm chart linter and template validator that runs `helm lint` and `helm template` on auto-detected chart directories.
 
 ### Files created:
-- `skills/gha-agent/scripts/gha-agent.sh` — main agent script (~140 lines total, ~100 lines domain code)
-- `skills/gha-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
-- `tests/gha-agent/clean/scenario.env` + `.github/workflows/ci.yml` — passing fixture (valid workflow)
-- `tests/gha-agent/issues/scenario.env` + `.github/workflows/bad.yml` — failing fixture (unquoted expression `${{ github.event.inputs.name }}`)
+- `skills/helm-agent/scripts/helm-agent.sh` — main agent script (~190 lines total, ~150 lines domain code)
+- `skills/helm-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/helm-agent/clean/` — passing fixture (valid chart with Chart.yaml, values.yaml, templates/configmap.yaml)
+- `tests/helm-agent/issues/` — failing fixture (chart with `required` template function on missing value)
+- `tests/helm-agent/no-chart/` — skip fixture (empty directory, no Chart.yaml)
 
 ### Files modified:
-- `install.sh` — added `gha-agent` to SKILLS, actionlint dep check, and snippet line
-- `README.md` — added gha-agent row in Available Agents table, usage section, direct-use example, and skill reference
+- `install.sh` — added `helm-agent` to SKILLS, helm dep check, and snippet line
+- `README.md` — added helm-agent row in Available Agents table, usage section, direct-use example, and skill reference
 
 ## Deviations from work plan
 
-None. Implementation follows the plan exactly.
+- **Removed `scoped-clean` scenario**: The test runner (`run-scenarios.sh`) does not support passing arbitrary environment variables (like `CHANGED_FILES`) to agent scripts. The `EXTRA_ENV` feature doesn't exist. Rather than modifying the test runner (out of scope), removed this scenario. CHANGED_FILES scoping is implemented in the script but cannot be exercised via the existing test infrastructure.
+- **Item 12 (scope/skip edge cases)**: Implemented `no-chart` scenario for skip behavior. CHANGED_FILES scope testing deferred due to test runner limitation above.
 
 ## Edge cases handled
-- No `.github/workflows/` directory: returns `SKIP` with explicit reason
-- `CHANGED_FILES` set but no workflow files match: returns `SKIP`
-- `CHANGED_FILES` filtering: only existing `.yml`/`.yaml` files under `.github/workflows/` are included
-- `--help`/`help`/`-h`: handled before `need actionlint` so it works without actionlint installed
+- No `Chart.yaml` found anywhere: returns `SKIP` with explicit reason for both lint and template steps
+- `CHART_DIR` set but no Chart.yaml at path: emits reason, SKIP behavior
+- `CHANGED_FILES` set but no chart-related files match: emits reason, SKIP
+- `CHANGED_FILES` filtering: only `.yaml`/`.yml`/`.tpl` files are considered chart-related
+- Chart root deduplication: multiple changed files in same chart produce single invocation
+- `--help`/`help`/`-h`: handled before `need helm` so it works without helm installed
 - Unknown commands: prints usage and exits 2
-- `RUN_LINT=0` in `all` mode: skips the lint step
+- `RUN_LINT=0` / `RUN_TEMPLATE=0` in `all` mode: skips respective steps
 - `FAIL_FAST`: uses `should_continue()` from shared lib
-- Empty workflow files list via discovery: returns `SKIP`
+- Multiple charts: per-chart sequential iteration with indexed log files
+- Subchart exclusion: `find` excludes `*/charts/*` to avoid processing vendored subcharts
 
 ## Tests written/run
-- `tests/gha-agent/clean/` — would pass with exit 0 (valid workflow, actionlint passes)
-- `tests/gha-agent/issues/` — would fail with exit 1 (unquoted expression in workflow)
-- Both scenarios correctly SKIP when `actionlint` is not installed (REQUIRED_TOOLS gating)
-- `shellcheck --severity=warning` passes on gha-agent.sh
-- Full suite: all 18 scenarios pass (including all existing agents), 0 failures
+- `tests/helm-agent/clean/` — valid chart passes with exit 0
+- `tests/helm-agent/issues/` — chart with required field error fails with exit 1
+- `tests/helm-agent/no-chart/` — empty dir produces SKIP with exit 0
+- All 3 scenarios correctly SKIP when `helm` is not installed (REQUIRED_TOOLS gating)
+- `shellcheck --severity=warning` passes on helm-agent.sh
+- Full suite: all 21 scenarios pass (including all existing agents), 0 failures
 
 ## Known limitations
 - `CHANGED_FILES` splits on whitespace; paths with spaces are not supported (matches convention used by all other agents)
-- Scenario tests require `actionlint` to be installed to run the actual lint checks; they SKIP gracefully when missing
+- Scenario tests require `helm` to be installed to run the actual lint/template checks; they SKIP gracefully when missing
+- Test runner does not support EXTRA_ENV, so CHANGED_FILES scoping cannot be exercised in scenario tests
 
 ## Feedback Closure Matrix
 No prior review issues exist for this spec (first implementation).
 
 ## Exploration notes
-Updated `.ralph/exploration.md`: added gha-agent entry to Key Files & Roles, updated install.sh description to include gha-agent.
+Updated `.ralph/exploration.md`: changed helm-agent from "(to be added)" to actual file path and description; updated tests/helm-agent description to reflect actual scenarios.
 
 ## Lessons Applied This Phase
-- help-before-need: Parsed help flags before `need actionlint` so `--help` works without actionlint installed (pattern from bash-agent and go-agent)
-- Followed existing agent patterns (bash-agent) for file discovery, structured output, and scenario fixture format
+- help-before-need: Parsed help flags before `need helm` so `--help` works without helm installed (pattern from bash-agent, go-agent, gha-agent)
+- Followed existing agent patterns (gha-agent) for file discovery, structured output, and scenario fixture format
+- Fixed shellcheck SC2221/SC2222 warning: `*.yaml` already covers `Chart.yaml` and `values.yaml` in case patterns
 
 ## Suggestions for the REVIEW agent
-- Verify `--help` works without actionlint installed
-- The issue fixture uses unquoted `${{ github.event.inputs.name }}` which actionlint should flag
-- Verify SKIP behavior when no `.github/workflows/` directory exists
-- `CHANGED_FILES` scoping correctly filters to only `.yml`/`.yaml` under `.github/workflows/`
-- Single-step agent so `all` command routes through `run_lint` with `should_continue` guard
+- Verify `--help` works without helm installed
+- The issues fixture uses `required "requiredField must be set"` on a missing value which should fail deterministically
+- Verify SKIP behavior when no `Chart.yaml` exists (no-chart scenario)
+- `CHANGED_FILES` scoping correctly filters `.yaml`/`.yml`/`.tpl` and finds parent Chart.yaml
+- Chart root deduplication via `seen` variable prevents duplicate runs
+- Subchart directories (`*/charts/*`) are excluded from recursive discovery

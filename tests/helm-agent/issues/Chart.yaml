@@ -1,0 +1,4 @@
+apiVersion: v2
+name: bad-chart
+description: A chart with template errors
+version: 0.1.0

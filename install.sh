@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="bash-agent cargo-agent gha-agent go-agent npm-agent py-agent terra-agent"
+SKILLS="bash-agent cargo-agent gha-agent go-agent helm-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -307,6 +307,15 @@ check_optional_deps() {
     fi
   fi
 
+  if skill_selected "helm-agent"; then
+    if command -v helm >/dev/null 2>&1; then
+      info "  Found: helm"
+    else
+      warn "  Missing: helm (needed by helm-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "go-agent"; then
     if command -v go >/dev/null 2>&1; then
       info "  Found: go"
@@ -401,6 +410,9 @@ print_agents_md_snippet() {
         ;;
       gha-agent)
         echo "- GitHub Actions: use \`/gha-agent\` (lint)."
+        ;;
+      helm-agent)
+        echo "- Helm: use \`/helm-agent\` (lint/template)."
         ;;
       go-agent)
         echo "- Go: use \`/go-agent\` (fmt/vet/staticcheck/test)."

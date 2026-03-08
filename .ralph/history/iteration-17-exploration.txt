@@ -6,13 +6,13 @@
 - `skills/bash-agent/scripts/bash-agent.sh`: multi-scope baseline for `CHANGED_FILES` filtering and output contract.
 - `skills/cargo-agent/scripts/cargo-agent.sh`: shared-lib-backed orchestration for heavy multi-step outputs and failure aggregation.
 - `skills/go-agent/scripts/go-agent.sh`: domain-specific step toggles and scope mapping for source files.
-- `skills/helm-agent/scripts/helm-agent.sh`: Helm chart linter and template validator with auto-detection via Chart.yaml search, CHART_DIR override, and CHANGED_FILES scoping.
+- `skills/helm-agent/` (to be added): new Helm chart runner with chart discovery + per-step toggles.
 - `skills/gha-agent/scripts/gha-agent.sh`: single-step discovery/scoping example, including skip behavior for missing optional directories.
 - `skills/npm-agent/scripts/npm-agent.sh`: fallback-tool execution pattern and scoped target filtering for file-based steps.
 - `skills/terra-agent/scripts/terra-agent.sh`: lock + non-mutating safety patterns plus optional tooling behavior.
 - `tests/run-scenarios.sh`: centralized test runner; invokes shellcheck then executes each `scenario.env` fixture.
 - `tests/<agent>/clean/` and `tests/<agent>/issues/`: minimal scenario fixtures for deterministic pass/fail behavior.
-- `tests/helm-agent/`: chart fixtures for linting/render validation (clean, issues, no-chart scenarios).
+- `tests/helm-agent/` (to be added): chart fixtures for linting/render validation and scoped chart discovery.
 - `install.sh`: installer registry/discovery for skills and optional dependency checks.
 - `README.md`: canonical user-facing agent catalog and usage examples.
 - `.ralph/specs/06-helm-agent.md`: helm acceptance criteria and required edge-case behavior (`CHART_DIR`, `CHANGED_FILES`, skip semantics).

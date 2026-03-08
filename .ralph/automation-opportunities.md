@@ -69,3 +69,17 @@
 **Automated Check**: Add a review/plan-time validation that inspects `FR` requirements or scenario docs for required skip behavior and fails fast if the implementation plan/work item does not include a dedicated skip fixture.
 
 **Status**: PENDING
+
+## [2026-03-08T00:00:00Z] scoped-edge-scenarios-for-agents
+
+**Frequency**: Repeated across agents with CHANGED_FILES support
+
+**Priority**: HIGH
+
+**Current Issue**: Agents with scoped execution often ship clean/issues fixtures that pass but miss CHANGED_FILES edge cases (no-match and positive-scope branches), so regressions in file scoping logic can slip through.
+
+**Manual Check**: For each scoped agent, add explicit scenarios that verify scoped-match, scoped-no-match, and explicit override behavior.
+
+**Automated Check**: Add a planning/validation rule that parses `.ralph/specs/*-agent.md` for CHANGED_FILES-related requirements and asserts that `tests/<agent>/` contains a dedicated scenario asserting CHANGED_FILES path behavior in addition to clean/issues.
+
+**Status**: PENDING
