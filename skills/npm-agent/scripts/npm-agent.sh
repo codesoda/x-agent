@@ -368,7 +368,7 @@ main() {
     test)      run_tests     || overall_ok=0 ;;
     build)     run_build     || overall_ok=0 ;;
     all)
-      if [[ "$RUN_FORMAT" == "1" ]]; then run_format || overall_ok=0; fi
+      if [[ "$RUN_FORMAT" == "1" ]] && should_continue; then run_format || overall_ok=0; fi
       if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
       if [[ "$RUN_TYPECHECK" == "1" ]] && should_continue; then run_typecheck || overall_ok=0; fi
       if [[ "$RUN_TESTS" == "1" ]] && should_continue; then run_tests || overall_ok=0; fi

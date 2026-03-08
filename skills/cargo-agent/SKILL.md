@@ -84,3 +84,4 @@ scripts/cargo-agent.sh test -p api test_auth  # "test_auth" in api crate
 - `CHANGED_FILES` uses `cargo metadata` to resolve files to workspace packages, then scopes check/clippy/test to only those packages
 - Short package names are auto-resolved (e.g. `-p api` matches `my-project-api`)
 - In CI (`CI=true`), `MAX_LINES` defaults to unlimited; locally it defaults to 40
+- Step ordering in `all`: fmt → sqlx → check/clippy → test. sqlx runs before compilation steps because a stale query cache causes confusing downstream errors

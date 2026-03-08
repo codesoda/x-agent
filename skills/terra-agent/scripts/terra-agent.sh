@@ -75,24 +75,27 @@ resolve_changed_tf_dir() {
   # Only auto-detect when TERRAFORM_CHDIR is the default.
   if [[ "$TERRAFORM_CHDIR" != "." ]]; then return; fi
 
-  local -A dirs=()
-  local f
+  local dirs=""
+  local f dir
   for f in $CHANGED_FILES; do
     case "$f" in
       *.tf|*.tf.json)
-        local dir
         dir="$(dirname "$f")"
-        dirs[$dir]=1
+        if ! echo "$dirs" | grep -Fxq "$dir"; then
+          dirs="${dirs:+$dirs$'\n'}$dir"
+        fi
         ;;
     esac
   done
 
-  local count="${#dirs[@]}"
+  if [[ -z "$dirs" ]]; then return; fi
+  local count
+  count="$(echo "$dirs" | wc -l | tr -d ' ')"
   if [[ "$count" == "1" ]]; then
-    TERRAFORM_CHDIR="${!dirs[*]}"
+    TERRAFORM_CHDIR="$dirs"
     echo "Auto-detected TERRAFORM_CHDIR=$TERRAFORM_CHDIR from changed files"
-  elif [[ "$count" -gt 1 ]]; then
-    echo "Note: changed .tf files span multiple directories (${!dirs[*]}), running from ."
+  else
+    echo "Note: changed .tf files span multiple directories, running from ."
   fi
 }
 
@@ -444,7 +447,7 @@ main() {
     validate)  run_validate || overall_ok=0 ;;
     lint)      run_lint || overall_ok=0 ;;
     all)
-      if [[ "$RUN_FMT" == "1" ]]; then run_fmt "$FMT_MODE" || overall_ok=0; fi
+      if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt "$FMT_MODE" || overall_ok=0; fi
       if [[ "$RUN_INIT" == "1" ]] && should_continue; then run_init || overall_ok=0; fi
       if [[ "$RUN_VALIDATE" == "1" ]] && should_continue; then run_validate || overall_ok=0; fi
       if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi

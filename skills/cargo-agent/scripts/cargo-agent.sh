@@ -156,13 +156,13 @@ resolve_affected_packages() {
     --arg root "$ws_root" \
     '.packages[] | "\(.name)\t\(.manifest_path | split("/")[:-1] | join("/") | ltrimstr($root + "/"))"')"
 
-  local -A seen=()
+  local seen=""
   local file rel_dir name
   for file in $CHANGED_FILES; do
     while IFS=$'\t' read -r name rel_dir; do
       if [[ "$file" == "$rel_dir"/* || "$file" == "$rel_dir" ]]; then
-        if [[ -z "${seen[$name]:-}" ]]; then
-          seen[$name]=1
+        if ! echo "$seen" | grep -Fxq "$name"; then
+          seen="${seen:+$seen$'\n'}$name"
           _AFFECTED_PKG_ARGS+=(-p "$name")
         fi
       fi
@@ -188,11 +188,16 @@ run_fmt() {
 
   echo "Mode: $mode"
   if [[ "$mode" == "fix" ]]; then
-    # In fix mode, first check which files need formatting, then apply.
+    # In fix mode, first detect which files need formatting, then apply.
     local needs_fmt
     needs_fmt="$(cargo fmt --all -- --check 2>&1 || true)"
-    cargo "${fmt_args[@]}" >"$log" 2>&1
-    if [[ -n "$needs_fmt" ]]; then
+    if ! cargo "${fmt_args[@]}" >"$log" 2>&1; then
+      ok=0
+      echo "Result: FAIL"
+      echo "Fix: resolve the issues above, then re-run: /cargo-agent fmt"
+      echo "First ${MAX_LINES} lines:"
+      head -n "$MAX_LINES" "$log"
+    elif [[ -n "$needs_fmt" ]]; then
       local changed_files
       changed_files="$(echo "$needs_fmt" | grep '^Diff in' | sed 's/^Diff in //' | sed 's/:[0-9]*:$//' | sort -u)"
       if [[ -n "$changed_files" ]]; then
@@ -205,14 +210,17 @@ run_fmt() {
     else
       echo "Result: PASS"
     fi
-  elif cargo "${fmt_args[@]}" >"$log" 2>&1; then
-    echo "Result: PASS"
   else
-    ok=0
-    echo "Result: FAIL"
-    echo "Fix: resolve the issues above, then re-run: /cargo-agent fmt"
-    echo "First ${MAX_LINES} lines:"
-    head -n "$MAX_LINES" "$log"
+    # Check mode (CI).
+    if cargo "${fmt_args[@]}" >"$log" 2>&1; then
+      echo "Result: PASS"
+    else
+      ok=0
+      echo "Result: FAIL"
+      echo "Fix: resolve the issues above, then re-run: /cargo-agent fmt"
+      echo "First ${MAX_LINES} lines:"
+      head -n "$MAX_LINES" "$log"
+    fi
   fi
 
   echo "Full log: $log"
@@ -477,7 +485,9 @@ main() {
     sqlx) run_sqlx_verify || overall_ok=0 ;;
     test)  run_tests "$@" || overall_ok=0 ;;
     all)
-      if [[ "$RUN_FMT" == "1" ]]; then run_fmt || overall_ok=0; fi
+      # sqlx runs early: it verifies the cache before compilation steps, and
+      # a stale cache causes confusing downstream errors in check/clippy.
+      if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt || overall_ok=0; fi
       if [[ "$RUN_SQLX" == "1" ]] && should_continue; then run_sqlx_verify || overall_ok=0; fi
       # Skip check when clippy is enabled — clippy is a superset of check.
       if [[ "$RUN_CHECK" == "1" && "$RUN_CLIPPY" != "1" ]] && should_continue; then run_check || overall_ok=0; fi
