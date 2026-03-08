@@ -113,11 +113,13 @@ run_cmd() {
 }
 
 # Check if a tool is available (directly or via runner).
+# For uv/poetry, checks whether the tool is accessible via `run which` to
+# avoid --version triggering auto-install of missing packages.
 have_tool() {
   local tool="$1"
   case "$RUNNER" in
-    uv)     uv run "$tool" --version >/dev/null 2>&1 ;;
-    poetry) poetry run "$tool" --version >/dev/null 2>&1 ;;
+    uv)     uv run which "$tool" >/dev/null 2>&1 ;;
+    poetry) poetry run which "$tool" >/dev/null 2>&1 ;;
     *)      command -v "$tool" >/dev/null 2>&1 ;;
   esac
 }
@@ -353,7 +355,7 @@ run_tests() {
     else
       run_cmd pytest >"$log" 2>&1 || ok=0
     fi
-  else
+  elif command -v "$PYTHON" >/dev/null 2>&1; then
     # Fallback: python -m unittest
     found=1
     echo "Using: python -m unittest"
@@ -372,6 +374,12 @@ run_tests() {
       fi
       ok=0
     fi
+  fi
+
+  if [[ "$found" == "0" ]]; then
+    echo "Result: SKIP (no test runner found — install pytest)"
+    fmt_elapsed
+    return 0
   fi
 
   if [[ "$ok" == "0" && -s "$log" ]]; then
@@ -439,9 +447,11 @@ main() {
 
   local cmd="${1:-all}"
   shift 2>/dev/null || true
-  local overall_ok=1
 
-  resolve_changed_py_files
+  # Help must work without project context.
+  case "$cmd" in
+    -h|--help|help) usage; exit 0 ;;
+  esac
 
   # Verify we're in a Python project
   if [[ ! -f "pyproject.toml" && ! -f "setup.py" && ! -f "setup.cfg" && ! -f "requirements.txt" ]]; then
@@ -449,8 +459,10 @@ main() {
     exit 2
   fi
 
+  local overall_ok=1
+  resolve_changed_py_files
+
   case "$cmd" in
-    -h|--help|help) usage; exit 0 ;;
     format)    run_format    || overall_ok=0 ;;
     lint)      run_lint      || overall_ok=0 ;;
     typecheck) run_typecheck || overall_ok=0 ;;

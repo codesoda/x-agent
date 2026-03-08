@@ -8,7 +8,7 @@ An agent is done only when all items below are complete.
 - `skills/<name>-agent/SKILL.md` `allowed-tools` includes patterns for all env knobs (`RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, plus any agent-specific knobs).
 - `skills/<name>-agent/scripts/<name>-agent.sh` exists and is executable.
 - Script starts with `set -euo pipefail`.
-- Script has `--help`/`help`/`-h` usage output.
+- Script has `--help`/`help`/`-h` usage output that works without project context (resolved before project-existence checks).
 
 ## Output Contract
 
