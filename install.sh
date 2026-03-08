@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
+SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent sql-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -408,6 +408,15 @@ check_optional_deps() {
     done
   fi
 
+  if skill_selected "sql-agent"; then
+    if command -v sqlfluff >/dev/null 2>&1; then
+      info "  Found: sqlfluff"
+    else
+      warn "  Missing: sqlfluff (needed by sql-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "terra-agent"; then
     if command -v terraform >/dev/null 2>&1; then
       info "  Found: terraform"
@@ -470,6 +479,9 @@ print_agents_md_snippet() {
         ;;
       py-agent)
         echo "- Python: use \`/py-agent\` (format/lint/typecheck/test)."
+        ;;
+      sql-agent)
+        echo "- SQL: use \`/sql-agent\` (lint/fix)."
         ;;
       terra-agent)
         echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/init/plan-safe/validate/lint)."

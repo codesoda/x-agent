@@ -1,17 +1,17 @@
 ## Implementation Checklist
-- [x] 1. Reconfirm spec requirements and map FRs to existing harness constraints (`.ralph/specs/10-sql-agent.md`, `AGENTS.md`, `docs/agents/scenario-tests.md`, `docs/agents/definition-of-done.md`).
-- [x] 2. Create `skills/sql-agent/scripts/sql-agent.sh` with common header, shared-lib sourcing, usage/help contract, and env knob definitions (`RUN_LINT`, `RUN_FIX`, `FMT_MODE`, `SQLFLUFF_DIALECT`, shared knobs).
-- [x] 3. Implement CI-aware format mode resolution and file-discovery pipeline for SQL targets with CHANGED_FILES filtering and recursive `.sql` auto-discovery.
-- [x] 4. Implement `run_lint` with `sqlfluff lint --dialect "$SQLFLUFF_DIALECT"` and explicit failure handling, log capture, truncated diagnostics, and required fail-hint.
-- [x] 5. Implement `run_fix` as opt-in, guarded by `RUN_FIX=1` or `FMT_MODE=fix`, invoking `sqlfluff fix --dialect "$SQLFLUFF_DIALECT" --force`, with correct skip behavior and fail hint.
-- [x] 6. Implement `main` command dispatch for `lint`, `fix`, `all` with `all` invoking `fix` before `lint` when enabled and respecting `RUN_*` + `FAIL_FAST`.
-- [x] 7. Add `skills/sql-agent/SKILL.md` with accurate front-matter, allowed-tool patterns, command examples, and knobs including `SQLFLUFF_DIALECT=*`, `RUN_FIX=*`, `FMT_MODE=*`.
-- [x] 8. Add SQL fixtures and scenarios under `tests/sql-agent/` for clean, issues, scoped-match/no-match, no-sql skip, explicit fix mode, and CI check-only behavior.
-- [x] 9. Wire `install.sh` for sql-agent in `SKILLS`, optional dependency check (`sqlfluff`), and install snippet support.
-- [x] 10. Update `README.md` with sql-agent in agent table and quick-start usage examples.
-- [x] 11. Add/extend automation guardrails (optional command matrix and scoped fixture assumptions) based on this spec's edge requirements.
-- [x] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
+- [ ] 1. Reconfirm spec requirements and map FRs to existing harness constraints (`.ralph/specs/10-sql-agent.md`, `AGENTS.md`, `docs/agents/scenario-tests.md`, `docs/agents/definition-of-done.md`).
+- [ ] 2. Create `skills/sql-agent/scripts/sql-agent.sh` with common header, shared-lib sourcing, usage/help contract, and env knob definitions (`RUN_LINT`, `RUN_FIX`, `FMT_MODE`, `SQLFLUFF_DIALECT`, shared knobs).
+- [ ] 3. Implement CI-aware format mode resolution and file-discovery pipeline for SQL targets with CHANGED_FILES filtering and recursive `.sql` auto-discovery.
+- [ ] 4. Implement `run_lint` with `sqlfluff lint --dialect "$SQLFLUFF_DIALECT"` and explicit failure handling, log capture, truncated diagnostics, and required fail-hint.
+- [ ] 5. Implement `run_fix` as opt-in, guarded by `RUN_FIX=1` or `FMT_MODE=fix`, invoking `sqlfluff fix --dialect "$SQLFLUFF_DIALECT" --force`, with correct skip behavior and fail hint.
+- [ ] 6. Implement `main` command dispatch for `lint`, `fix`, `all` with `all` invoking `fix` before `lint` when enabled and respecting `RUN_*` + `FAIL_FAST`.
+- [ ] 7. Add `skills/sql-agent/SKILL.md` with accurate front-matter, allowed-tool patterns, command examples, and knobs including `SQLFLUFF_DIALECT=*`, `RUN_FIX=*`, `FMT_MODE=*`.
+- [ ] 8. Add SQL fixtures and scenarios under `tests/sql-agent/` for clean, issues, scoped-match/no-match, no-sql skip, explicit fix mode, and CI check-only behavior.
+- [ ] 9. Wire `install.sh` for sql-agent in `SKILLS`, optional dependency check (`sqlfluff`), and install snippet support.
+- [ ] 10. Update `README.md` with sql-agent in agent table and quick-start usage examples.
+- [ ] 11. Add/extend automation guardrails (optional command matrix and scoped fixture assumptions) based on this spec's edge requirements.
+- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 ### Overall System Design and Boundaries

@@ -25,6 +25,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 | `kube-agent` | Kubernetes | validate (kubeconform/kubeval) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
+| `sql-agent` | SQL | lint (sqlfluff), fix (sqlfluff fix) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
 
 ## Quick Start
@@ -76,6 +77,9 @@ path/to/x-agent/skills/helm-agent/scripts/helm-agent.sh
 
 # Kubernetes project
 path/to/x-agent/skills/kube-agent/scripts/kube-agent.sh
+
+# SQL project
+path/to/x-agent/skills/sql-agent/scripts/sql-agent.sh
 
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
@@ -188,6 +192,18 @@ py-agent.sh test -k login  # tests matching "login"
 
 py-agent auto-detects your runner (uv, poetry, or plain python) and finds tools (ruff, black, flake8, mypy, pyright, pytest).
 
+### sql-agent
+
+```sh
+sql-agent.sh                                # full suite: lint only (fix off by default)
+sql-agent.sh lint                           # sqlfluff lint only
+sql-agent.sh fix                            # sqlfluff fix (auto-fix)
+RUN_FIX=1 sql-agent.sh all                 # lint + fix (fix runs first)
+SQLFLUFF_DIALECT=postgres sql-agent.sh lint  # specify dialect
+```
+
+`sql-agent` discovers `.sql` files recursively and lints them with `sqlfluff`. Fix defaults to OFF — enable with `RUN_FIX=1` or `FMT_MODE=fix`. In CI, fix is forced to check-only mode.
+
 ### terra-agent
 
 ```sh
@@ -259,6 +275,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 - `/kube-agent` — run Kubernetes manifest validation
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks
+- `/sql-agent` — run SQL linting/fixing
 - `/terra-agent` — run Terraform checks/fixes
 
 ## License

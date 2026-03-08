@@ -200,3 +200,28 @@
 **Manual Check**: Verify each new agent includes command-specific fixtures (all/lint/syntax) and scoped/no-match scenarios covering positive and skip paths.
 **Automated Check**: Extend scenario lint to require fixtures for every advertised command and per-step scope mode where applicable (e.g., CHANGED_FILES match/no-match + lint-only/syntax-only command runs).
 **Status**: PENDING
+
+## [2026-03-08T20:00:00Z] scoped-sql-fixture-coverage
+
+**Frequency**: On new agent additions with `CHANGED_FILES`, `FMT_MODE`, and command-specific paths.
+
+**Priority**: HIGH
+
+**Current Issue**: Agents often receive `scope`/`fix` requirements but pass with only clean+issues fixtures; this misses branch-specific regressions and allows `all`/command interactions to drift.
+
+**Manual Check**: Ensure scenarios explicitly cover `--` scoped-match, scoped-no-match, command-specific (`lint` and `fix`), and CI-mode branches before implementation approval.
+
+**Automated Check**:
+- Add a plan-time/validation rule that compares `.ralph/specs/*-agent.md` requirements to existing `tests/<agent>/` scenarios.
+- Fail when required command or CHANGED_FILES branches in requirements have no matching scenario directories.
+
+**Status**: PENDING
+
+## [2026-03-08T18:49:19Z] sql-agent-ci-fix-mode-guard
+
+**Frequency**: First occurrence
+**Priority**: HIGH
+**Current Issue**: Agents that combine `RUN_FIX` and `FMT_MODE` can still execute mutating fix commands in CI when `RUN_FIX=1`, even though CI should enforce check-only behavior.
+**Manual Check**: During review and test design, explicitly confirm CI fixtures assert that `RUN_FIX=1` with `CI=true` does not invoke mutating formatting/fix steps.
+**Automated Check**: Add validation that `resolve_fmt_mode` or equivalent and `all` dispatch logic require fix execution to be gated by both feature flags and CI state (for example, `CI` check or `FMT_MODE == fix`) after mode resolution.
+**Status**: PENDING
