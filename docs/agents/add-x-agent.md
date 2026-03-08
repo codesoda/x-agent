@@ -175,13 +175,37 @@ if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; f
 
 If a downstream tool supports its own fail-fast flag (e.g. `cargo nextest --fail-fast`), pass it through.
 
-## 6) Exit codes
+## 6) Support `CHANGED_FILES` scoping
+
+When a calling agent knows which files it has modified, it can pass them via
+`CHANGED_FILES="file1 file2"`. The agent should use this to scope its work
+to only the affected parts of the project, falling back to the full project
+when the variable is empty.
+
+How each agent implements this varies:
+
+- **cargo-agent**: maps changed files to workspace packages via `cargo metadata`
+  and passes `-p <pkg>` to check/clippy/test.
+- **npm-agent**: filters changed JS/TS files and passes them to lint/format
+  fallback tools (biome, eslint, prettier) instead of `.`.
+- **terra-agent**: auto-detects `TERRAFORM_CHDIR` from the directory containing
+  changed `.tf` files.
+
+Guidelines:
+
+- `CHANGED_FILES` is always optional — when empty, run the full project.
+- If scoping is not meaningful for a step, run it project-wide (e.g. typecheck,
+  build, tests in npm-agent).
+- Print what the scope resolved to (e.g. `Scoped to packages: -p api -p db`).
+- Add `Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)` to SKILL.md `allowed-tools`.
+
+## 7) Exit codes
 
 - `0` — all steps passed
 - `1` — one or more steps failed
 - `2` — bad usage, unknown command, or missing required dependency
 
-## 7) SKILL.md
+## 8) SKILL.md
 
 The `SKILL.md` front-matter must list `allowed-tools` patterns for every env knob the script supports, so the agent can invoke the script without prompting. Include at minimum:
 
@@ -192,16 +216,17 @@ allowed-tools:
   - Bash(MAX_LINES=* scripts/<name>-agent.sh*)
   - Bash(KEEP_DIR=* scripts/<name>-agent.sh*)
   - Bash(FAIL_FAST=* scripts/<name>-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)
 ```
 
-## 8) Update repository metadata
+## 9) Update repository metadata
 
 Update:
 
 - `README.md` (agent table + usage examples)
 - `install.sh` (`SKILLS` list and optional dependency checks)
 
-## 9) Add scenario tests
+## 10) Add scenario tests
 
 Add at least:
 
@@ -210,7 +235,7 @@ Add at least:
 
 Each scenario needs a `scenario.env`. See `docs/agents/scenario-tests.md`.
 
-## 10) Validate against definition of done
+## 11) Validate against definition of done
 
 Run through `docs/agents/definition-of-done.md` before commit.
 

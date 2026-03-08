@@ -21,6 +21,7 @@ RUN_SQLX="${RUN_SQLX:-1}"         # set to 0 to skip sqlx cache verify
 USE_NEXTEST="${USE_NEXTEST:-auto}" # auto|1|0
 RUN_INTEGRATION="${RUN_INTEGRATION:-0}" # set to 1 to run integration tests
 FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes to affected packages
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/cargo-agent.XXXXXX")"
@@ -135,6 +136,44 @@ resolve_package_args() {
   done
 }
 
+# Resolve CHANGED_FILES to affected workspace packages.
+# Populates _AFFECTED_PKG_ARGS with "-p pkg1 -p pkg2 ..." or empty if all.
+_AFFECTED_PKG_ARGS=()
+resolve_affected_packages() {
+  _AFFECTED_PKG_ARGS=()
+  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+
+  local metadata
+  metadata="$(cargo metadata --no-deps --format-version=1 2>/dev/null || true)"
+  if [[ -z "$metadata" ]]; then return; fi
+
+  local ws_root
+  ws_root="$(echo "$metadata" | "$JQ_BIN" -r '.workspace_root')"
+
+  # Build "name<TAB>relative-dir" pairs from manifest paths.
+  local pkg_dirs
+  pkg_dirs="$(echo "$metadata" | "$JQ_BIN" -r \
+    --arg root "$ws_root" \
+    '.packages[] | "\(.name)\t\(.manifest_path | split("/")[:-1] | join("/") | ltrimstr($root + "/"))"')"
+
+  local -A seen=()
+  local file rel_dir name
+  for file in $CHANGED_FILES; do
+    while IFS=$'\t' read -r name rel_dir; do
+      if [[ "$file" == "$rel_dir"/* || "$file" == "$rel_dir" ]]; then
+        if [[ -z "${seen[$name]:-}" ]]; then
+          seen[$name]=1
+          _AFFECTED_PKG_ARGS+=(-p "$name")
+        fi
+      fi
+    done <<< "$pkg_dirs"
+  done
+
+  if [[ ${#_AFFECTED_PKG_ARGS[@]} -gt 0 ]]; then
+    echo "Scoped to packages: ${_AFFECTED_PKG_ARGS[*]}"
+  fi
+}
+
 run_fmt() {
   step "fmt"
   local log="$OUTDIR/fmt.log"
@@ -187,7 +226,10 @@ run_check() {
   local diags="$OUTDIR/check.diags.txt"
   local ok=1
 
-  if cargo check --workspace --all-targets --message-format=json >"$json" 2>"$OUTDIR/check.stderr.log"; then
+  local -a scope=(--workspace)
+  if [[ ${#_AFFECTED_PKG_ARGS[@]} -gt 0 ]]; then scope=("${_AFFECTED_PKG_ARGS[@]}"); fi
+
+  if cargo check "${scope[@]}" --all-targets --message-format=json >"$json" 2>"$OUTDIR/check.stderr.log"; then
     :
   else
     ok=0
@@ -225,7 +267,10 @@ run_clippy() {
   local diags="$OUTDIR/clippy.diags.txt"
   local ok=1
 
-  if cargo clippy --workspace --all-targets --message-format=json >"$json" 2>"$OUTDIR/clippy.stderr.log"; then
+  local -a scope=(--workspace)
+  if [[ ${#_AFFECTED_PKG_ARGS[@]} -gt 0 ]]; then scope=("${_AFFECTED_PKG_ARGS[@]}"); fi
+
+  if cargo clippy "${scope[@]}" --all-targets --message-format=json >"$json" 2>"$OUTDIR/clippy.stderr.log"; then
     :
   else
     ok=0
@@ -344,6 +389,10 @@ run_tests() {
   if [[ "$RUN_INTEGRATION" == "1" ]]; then
     nextest_args+=(--features integration)
   fi
+  # Scope to affected packages when CHANGED_FILES is set and no explicit -p flag.
+  if [[ ${#_AFFECTED_PKG_ARGS[@]} -gt 0 && "$*" != *"-p"* ]]; then
+    nextest_args+=("${_AFFECTED_PKG_ARGS[@]}")
+  fi
 
   # Extra args (filters, -p package, etc.) are passed through to nextest.
   if cargo nextest run \
@@ -393,6 +442,7 @@ Env knobs:
   RUN_TESTS=0|1
   RUN_INTEGRATION=0|1  # enable integration tests (requires DB/network)
   USE_NEXTEST=auto|1|0
+  CHANGED_FILES="f1 f2"   # scope check/clippy/test to affected packages
 
 Examples:
   cargo-agent                          # full suite
@@ -416,6 +466,8 @@ main() {
   local cmd="${1:-all}"
   shift 2>/dev/null || true
   local overall_ok=1
+
+  resolve_affected_packages
 
   case "$cmd" in
     -h|--help|help) usage; exit 0 ;;

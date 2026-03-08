@@ -22,6 +22,7 @@ FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
 TERRAFORM_CHDIR="${TERRAFORM_CHDIR:-${TF_CHDIR:-.}}"
 FAIL_FAST="${FAIL_FAST:-0}"           # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"    # space-separated list; auto-sets TERRAFORM_CHDIR from .tf files
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/terra-agent.XXXXXX")"
@@ -64,6 +65,34 @@ fmt_elapsed() {
 normalize_dir() {
   if [[ -z "$TERRAFORM_CHDIR" ]]; then
     TERRAFORM_CHDIR="."
+  fi
+}
+
+# If CHANGED_FILES is set and TERRAFORM_CHDIR was not explicitly provided,
+# auto-detect the terraform root from changed .tf files.
+resolve_changed_tf_dir() {
+  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+  # Only auto-detect when TERRAFORM_CHDIR is the default.
+  if [[ "$TERRAFORM_CHDIR" != "." ]]; then return; fi
+
+  local -A dirs=()
+  local f
+  for f in $CHANGED_FILES; do
+    case "$f" in
+      *.tf|*.tf.json)
+        local dir
+        dir="$(dirname "$f")"
+        dirs[$dir]=1
+        ;;
+    esac
+  done
+
+  local count="${#dirs[@]}"
+  if [[ "$count" == "1" ]]; then
+    TERRAFORM_CHDIR="${!dirs[*]}"
+    echo "Auto-detected TERRAFORM_CHDIR=$TERRAFORM_CHDIR from changed files"
+  elif [[ "$count" -gt 1 ]]; then
+    echo "Note: changed .tf files span multiple directories (${!dirs[*]}), running from ."
   fi
 }
 
@@ -367,6 +396,7 @@ Env knobs:
   FMT_MODE=check|fix             # default: check
   FMT_RECURSIVE=0|1              # default: 1
   TFLINT_RECURSIVE=0|1           # default: 1
+  CHANGED_FILES="f1 f2"          # auto-set TERRAFORM_CHDIR from changed .tf files
 
 Examples:
   terra-agent
@@ -402,6 +432,7 @@ main() {
 
   need terraform
   normalize_dir
+  resolve_changed_tf_dir
   ensure_terraform_project
 
   case "$cmd" in
