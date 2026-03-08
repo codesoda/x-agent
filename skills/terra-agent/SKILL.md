@@ -15,6 +15,7 @@ allowed-tools:
   - Bash(FMT_MODE=* scripts/terra-agent.sh*)
   - Bash(TERRAFORM_CHDIR=* scripts/terra-agent.sh*)
   - Bash(TF_CHDIR=* scripts/terra-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/terra-agent.sh*)
 ---
 
 # Terra Agent
@@ -60,7 +61,9 @@ scripts/terra-agent.sh all         # full suite (default)
 | `TFLINT_RECURSIVE` | `1` | Set to `0` to disable recursive tflint |
 | `TERRAFORM_CHDIR` | `.` | Terraform root directory to run in |
 | `TF_CHDIR` | `.` | Alias for `TERRAFORM_CHDIR` |
-| `MAX_LINES` | `40` | Max diagnostic lines printed per step |
+| `FAIL_FAST` | `0` | Set to `1` to stop after first failure (or use `--fail-fast`) |
+| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; auto-sets `TERRAFORM_CHDIR` from `.tf` files |
+| `MAX_LINES` | `40` | Max diagnostic lines printed per step (unlimited in CI) |
 | `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
 
 ## Output Format
@@ -81,3 +84,5 @@ scripts/terra-agent.sh all         # full suite (default)
 - `plan-safe` runs with `-refresh=false`, `-lock=false`, `-input=false`, and `-detailed-exitcode`
 - `plan-safe` treats exit code `2` (changes present) as `PASS`; only errors fail the step
 - `lint` is skipped gracefully when `tflint` is not installed
+- `CHANGED_FILES` auto-detects `TERRAFORM_CHDIR` when all changed `.tf` files are in one directory
+- In CI (`CI=true`), `MAX_LINES` defaults to unlimited; locally it defaults to 40

@@ -22,6 +22,7 @@ FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
 TERRAFORM_CHDIR="${TERRAFORM_CHDIR:-${TF_CHDIR:-.}}"
 FAIL_FAST="${FAIL_FAST:-0}"           # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"    # space-separated list; auto-sets TERRAFORM_CHDIR from .tf files
 
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/terra-agent.XXXXXX")"
@@ -64,6 +65,37 @@ fmt_elapsed() {
 normalize_dir() {
   if [[ -z "$TERRAFORM_CHDIR" ]]; then
     TERRAFORM_CHDIR="."
+  fi
+}
+
+# If CHANGED_FILES is set and TERRAFORM_CHDIR was not explicitly provided,
+# auto-detect the terraform root from changed .tf files.
+resolve_changed_tf_dir() {
+  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+  # Only auto-detect when TERRAFORM_CHDIR is the default.
+  if [[ "$TERRAFORM_CHDIR" != "." ]]; then return; fi
+
+  local dirs=""
+  local f dir
+  for f in $CHANGED_FILES; do
+    case "$f" in
+      *.tf|*.tf.json)
+        dir="$(dirname "$f")"
+        if ! echo "$dirs" | grep -Fxq "$dir"; then
+          dirs="${dirs:+$dirs$'\n'}$dir"
+        fi
+        ;;
+    esac
+  done
+
+  if [[ -z "$dirs" ]]; then return; fi
+  local count
+  count="$(echo "$dirs" | wc -l | tr -d ' ')"
+  if [[ "$count" == "1" ]]; then
+    TERRAFORM_CHDIR="$dirs"
+    echo "Auto-detected TERRAFORM_CHDIR=$TERRAFORM_CHDIR from changed files"
+  else
+    echo "Note: changed .tf files span multiple directories, running from ."
   fi
 }
 
@@ -367,6 +399,7 @@ Env knobs:
   FMT_MODE=check|fix             # default: check
   FMT_RECURSIVE=0|1              # default: 1
   TFLINT_RECURSIVE=0|1           # default: 1
+  CHANGED_FILES="f1 f2"          # auto-set TERRAFORM_CHDIR from changed .tf files
 
 Examples:
   terra-agent
@@ -402,6 +435,7 @@ main() {
 
   need terraform
   normalize_dir
+  resolve_changed_tf_dir
   ensure_terraform_project
 
   case "$cmd" in
@@ -413,7 +447,7 @@ main() {
     validate)  run_validate || overall_ok=0 ;;
     lint)      run_lint || overall_ok=0 ;;
     all)
-      if [[ "$RUN_FMT" == "1" ]]; then run_fmt "$FMT_MODE" || overall_ok=0; fi
+      if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt "$FMT_MODE" || overall_ok=0; fi
       if [[ "$RUN_INIT" == "1" ]] && should_continue; then run_init || overall_ok=0; fi
       if [[ "$RUN_VALIDATE" == "1" ]] && should_continue; then run_validate || overall_ok=0; fi
       if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi

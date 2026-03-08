@@ -169,19 +169,81 @@ When the `all` command runs multiple steps and `--fail-fast` (or `FAIL_FAST=1`) 
 Use the `should_continue` helper before each step in the `all` path:
 
 ```bash
-if [[ "$RUN_FMT" == "1" ]]; then run_fmt || overall_ok=0; fi
+if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt || overall_ok=0; fi
 if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
 ```
 
+Since `overall_ok` starts as `1`, the guard passes for the first step — apply it consistently to all steps for clarity.
+
 If a downstream tool supports its own fail-fast flag (e.g. `cargo nextest --fail-fast`), pass it through.
 
-## 6) Exit codes
+## 6) Support `CHANGED_FILES` scoping
+
+When a calling agent knows which files it has modified, it can pass them via
+`CHANGED_FILES="file1 file2"`. The agent should use this to scope its work
+to only the affected parts of the project, falling back to the full project
+when the variable is empty.
+
+How each agent implements this varies:
+
+- **cargo-agent**: maps changed files to workspace packages via `cargo metadata`
+  and passes `-p <pkg>` to check/clippy/test.
+- **npm-agent**: filters changed JS/TS files and passes them to lint/format
+  fallback tools (biome, eslint, prettier) instead of `.`.
+- **terra-agent**: auto-detects `TERRAFORM_CHDIR` from the directory containing
+  changed `.tf` files.
+
+Guidelines:
+
+- `CHANGED_FILES` is always optional — when empty, run the full project.
+- If scoping is not meaningful for a step, run it project-wide (e.g. typecheck,
+  build, tests in npm-agent).
+- Print what the scope resolved to (e.g. `Scoped to packages: -p api -p db`).
+- Add `Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)` to SKILL.md `allowed-tools`.
+
+## 7) Workflow-level lock
+
+Prevent concurrent agent runs from causing build-directory contention by
+acquiring an exclusive lock at startup. Place the lock after the cleanup trap
+and before any real work:
+
+```bash
+LOCKFILE="${TMPDIR_ROOT%/}/<name>-agent.lock"
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock -n 9; then
+    echo "<name>-agent: waiting for another run to finish..."
+    flock 9
+  fi
+else
+  # macOS: flock not available, use perl as a portable fallback.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "Warning: neither flock nor perl available; skipping workflow lock" >&2
+  else
+    perl -e '
+      use Fcntl ":flock";
+      open(my $fh, ">&=", 9) or die "fdopen: $!";
+      if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        print STDERR "<name>-agent: waiting for another run to finish...\n";
+        flock($fh, LOCK_EX) or die "flock: $!";
+      }
+    '
+  fi
+fi
+```
+
+The lock is automatically released when the script exits (fd 9 is closed).
+On Linux `flock` is used directly; on macOS (where `flock` is unavailable)
+the script falls back to Perl's `flock`. If neither is available, a warning
+is printed and execution continues unlocked.
+
+## 8) Exit codes
 
 - `0` — all steps passed
 - `1` — one or more steps failed
 - `2` — bad usage, unknown command, or missing required dependency
 
-## 7) SKILL.md
+## 9) SKILL.md
 
 The `SKILL.md` front-matter must list `allowed-tools` patterns for every env knob the script supports, so the agent can invoke the script without prompting. Include at minimum:
 
@@ -192,16 +254,17 @@ allowed-tools:
   - Bash(MAX_LINES=* scripts/<name>-agent.sh*)
   - Bash(KEEP_DIR=* scripts/<name>-agent.sh*)
   - Bash(FAIL_FAST=* scripts/<name>-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)
 ```
 
-## 8) Update repository metadata
+## 10) Update repository metadata
 
 Update:
 
 - `README.md` (agent table + usage examples)
 - `install.sh` (`SKILLS` list and optional dependency checks)
 
-## 9) Add scenario tests
+## 11) Add scenario tests
 
 Add at least:
 
@@ -210,7 +273,7 @@ Add at least:
 
 Each scenario needs a `scenario.env`. See `docs/agents/scenario-tests.md`.
 
-## 10) Validate against definition of done
+## 12) Validate against definition of done
 
 Run through `docs/agents/definition-of-done.md` before commit.
 

@@ -28,6 +28,7 @@ An agent is done only when all items below are complete.
 - Missing optional tools are handled as `SKIP` with a clear reason.
 - Cleanup trap preserves logs on failure or `KEEP_DIR=1`; removes temp dir on success.
 - Exit codes: `0` pass, `1` fail, `2` bad usage or missing required dep.
+- Supports `CHANGED_FILES` for scoping work to affected files/packages where meaningful (optional but recommended).
 
 ## Documentation and Install
 
