@@ -55,3 +55,17 @@
 **Automated Check**: Add a shellcheck/lint rule or helper wrapper test in scenario review that flags check-mode implementations that ignore `gofmt -l`/scanner exit status and rely solely on empty stdout.
 
 **Status**: PENDING
+
+## [2026-03-08T17:27:56Z] skip-path-test-coverage
+
+**Frequency**: Each new agent with discoverable path assumptions
+
+**Priority**: MEDIUM
+
+**Current Issue**: Agents with path-dependent discovery (for example workflow discovery, lint target discovery, or scope-only execution) can pass clean/issues fixtures while still missing explicit skip-path assertions.
+
+**Manual Check**: Create and run an explicit no-match fixture by name for each such agent and confirm `Result: SKIP` and exit semantics.
+
+**Automated Check**: Add a review/plan-time validation that inspects `FR` requirements or scenario docs for required skip behavior and fails fast if the implementation plan/work item does not include a dedicated skip fixture.
+
+**Status**: PENDING

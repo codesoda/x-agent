@@ -8,7 +8,7 @@ approval: never
 sandbox: workspace-write [workdir, /tmp, $TMPDIR]
 reasoning effort: xhigh
 reasoning summaries: none
-session id: 019cce75-9c00-77f0-b82a-37bb0f5b11ec
+session id: 019cce7d-198b-7fe3-b646-a63209f882ad
 --------
 user
 You are the PLAN agent for RALPH (Recursive Autonomous Loop with Planning & Human-oversight).
@@ -63,109 +63,95 @@ Extract shared boilerplate from existing agents into a common library, then ship
 
 
 **Current Specification:**
-# Spec 04: go-agent
+# Spec 05: gha-agent
 
 ## Objective
 
-Create a new go-agent that checks Go formatting, runs vet/lint, and executes tests.
+Create a new gha-agent that lints GitHub Actions workflow files using `actionlint`.
 
 ## Source
 
-- **PRD User Story:** US-003
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
+- **PRD User Story:** US-004
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
 ## User Story Context
 
-> As a developer, I want a go-agent that checks formatting, runs vet/lint, and executes tests so I can validate Go code before CI.
+> As a developer, I want a gha-agent that lints GitHub Actions workflow files so I can catch workflow errors before pushing.
 
 ## Functional Requirements
 
 - FR-1: Sources `lib/x-agent-common.sh`
 - FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_FMT, RUN_VET, RUN_STATICCHECK, RUN_TESTS)
+- FR-3: Per-step toggles (RUN_LINT)
 - FR-4: Structured output
 - FR-5: --fail-fast and --help
-- FR-6: Required tools (go) checked with need(); staticcheck optional (skip with notice)
-- FR-10: FMT_MODE=check|fix; CI forces check mode
+- FR-6: Required tools (actionlint) checked with need()
 - FR-11, FR-12, FR-13: SKILL.md, install.sh, scenario tests
 
 ## Components
 
-- **Create:** `skills/go-agent/scripts/go-agent.sh`
-- **Create:** `skills/go-agent/SKILL.md`
-- **Create:** `tests/go-agent/clean/` (scenario.env + minimal Go project)
-- **Create:** `tests/go-agent/issues/` (scenario.env + Go project with issues)
+- **Create:** `skills/gha-agent/scripts/gha-agent.sh`
+- **Create:** `skills/gha-agent/SKILL.md`
+- **Create:** `tests/gha-agent/clean/` (scenario.env + valid workflow fixture)
+- **Create:** `tests/gha-agent/issues/` (scenario.env + invalid workflow fixture)
 - **Modify:** `install.sh`
 - **Modify:** `README.md`
 
 ## Implementation Details
 
-### Script: `go-agent.sh`
+### Script: `gha-agent.sh`
 
 **Agent-specific knobs:**
 ```bash
-RUN_FMT="${RUN_FMT:-1}"
-RUN_VET="${RUN_VET:-1}"
-RUN_STATICCHECK="${RUN_STATICCHECK:-1}"
-RUN_TESTS="${RUN_TESTS:-1}"
-FMT_MODE="${FMT_MODE:-auto}"  # auto = fix locally, check in CI
+RUN_LINT="${RUN_LINT:-1}"
 ```
 
-**Required tools:** `need go`
-**Optional tools:** `staticcheck` (skip with notice if not found)
+**Required tools:** `need actionlint`
 
-**Step: fmt**
-- Check mode: `gofmt -l .` — list files that need formatting. If any listed, FAIL.
-- Fix mode: `gofmt -w .` — write changes. Always PASS unless gofmt errors.
-- `FMT_MODE=auto`: fix locally, check in CI
-- Fix hint: `Fix: run /go-agent fmt with FMT_MODE=fix, then re-run: /go-agent fmt`
+**Step: lint**
+- If no `.github/workflows/` directory exists: `Result: SKIP (no .github/workflows/ directory found)`
+- Run `actionlint` (it auto-discovers `.github/workflows/*.yml` and `*.yaml`)
+- If CHANGED_FILES is set, filter to only `.yml`/`.yaml` files under `.github/workflows/` and pass them as args
+- If CHANGED_FILES is set but none match workflow path, SKIP
+- Capture output, log to disk
+- Fix hint: `Fix: resolve the workflow errors above, then re-run: /gha-agent lint`
 
-**Step: vet**
-- Run `go vet ./...`
-- Capture stderr (where go vet writes diagnostics)
-- Fix hint: `Fix: resolve the vet issues above, then re-run: /go-agent vet`
+**Commands:** `lint`, `all` (default)
 
-**Step: staticcheck**
-- If `staticcheck` not installed: `Result: SKIP (staticcheck not found — install via go install honnef.co/go/tools/cmd/staticcheck@latest)`
-- If installed: run `staticcheck ./...`
-- Fix hint: `Fix: resolve the staticcheck issues above, then re-run: /go-agent staticcheck`
-
-**Step: test**
-- Run `go test ./...`
-- On failure, extract failing test names from output (lines matching `--- FAIL:`)
-- Fix hint: `Fix: failing tests: TestFoo, TestBar — resolve and re-run: /go-agent test`
-
-**CHANGED_FILES scoping:**
-- Filter `.go` files from CHANGED_FILES
-- Extract unique package directories
-- Pass as args to `go vet`, `staticcheck`, `go test` instead of `./...`
-- `gofmt` always takes file/dir args so pass changed dirs
-
-**Commands:** `fmt`, `vet`, `staticcheck`, `test`, `all` (default)
+This is a simple single-step agent. The main function is straightforward.
 
 ### Scenario Tests
 
-**clean fixture:**
-- `go.mod` with a module name (e.g., `module example.com/clean`)
-- `main.go` with a simple valid, formatted Go program
-- REQUIRED_TOOLS="go"
+**clean fixture (`tests/gha-agent/clean/`):**
+- `.github/workflows/ci.yml`: a minimal valid GitHub Actions workflow
+  ```yaml
+  name: CI
+  on: [push]
+  jobs:
+    test:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - run: echo "hello"
+  ```
+- REQUIRED_TOOLS="actionlint"
 
-**issues fixture:**
-- `go.mod` with module name
-- `main.go` with formatting issues (tabs vs spaces) OR vet issues (e.g., `fmt.Printf("%d", "string")`)
-- REQUIRED_TOOLS="go"
+**issues fixture (`tests/gha-agent/issues/`):**
+- `.github/workflows/bad.yml`: a workflow with actionlint-detectable issues
+  - e.g., invalid `runs-on` value, missing `uses` version, or bad expression syntax like `${{ github.events.push }}`
+- REQUIRED_TOOLS="actionlint"
 
 ### SKILL.md
 
-Triggers on: go agent, run go checks, golang checks, go fmt vet test, verify go code.
-Allowed-tools: include `FMT_MODE=*` pattern.
+Triggers on: gha agent, github actions lint, actionlint, workflow lint, github actions checks.
+Single step so allowed-tools is minimal.
 
 ## Test Strategy
 
-- `tests/run-scenarios.sh go-agent` — clean passes, issues fails
-- `shellcheck --severity=warning` passes on the script
-- Verify FMT_MODE=check catches unformatted code, FMT_MODE=fix reformats it
-- Verify staticcheck gracefully skips when not installed
+- `tests/run-scenarios.sh gha-agent` — clean passes, issues fails
+- `shellcheck --severity=warning` passes
+- Verify SKIP when no `.github/workflows/` exists
+- Verify CHANGED_FILES scoping filters to workflow files only
 
 ## Dependencies
 
@@ -173,14 +159,12 @@ Allowed-tools: include `FMT_MODE=*` pattern.
 
 ## Acceptance Criteria
 
-- [ ] `skills/go-agent/scripts/go-agent.sh` exists and is executable
+- [ ] `skills/gha-agent/scripts/gha-agent.sh` exists and is executable
 - [ ] Sources `lib/x-agent-common.sh`
-- [ ] `fmt` step uses `gofmt -l` in check mode, `gofmt -w` in fix mode; CI forces check
-- [ ] `vet` step runs `go vet ./...`
-- [ ] `staticcheck` step skips with notice if not installed
-- [ ] `test` step runs `go test ./...`, extracts failing test names in Fix: hint
-- [ ] Commands: `fmt`, `vet`, `staticcheck`, `test`, `all`
-- [ ] CHANGED_FILES scoping maps .go files to packages
+- [ ] `lint` step runs `actionlint` on workflow files
+- [ ] Reports SKIP when no `.github/workflows/` directory exists
+- [ ] CHANGED_FILES scoping filters to `.yml`/`.yaml` under `.github/workflows/`
+- [ ] Commands: `lint`, `all`
 - [ ] SKILL.md, install.sh, README.md updated
 - [ ] clean/issues scenario tests pass
 - [ ] shellcheck passes
@@ -191,11 +175,11 @@ No lessons recorded yet.
 
 **Feedback from Previous Review:**
 DECISION: SHIP
-ITERATION: 5
-SPEC: 03-bash-agent.md
+ITERATION: 6
+SPEC: 04-go-agent.md
 
 SUMMARY:
-The bash-agent implementation is complete and meets the acceptance criteria for Spec 03: discovery, syntax/lint execution, fixture coverage, installer/docs wiring, and gated scenario tests all behave as intended.
+The go-agent implementation aligns with Spec 04 and appears functionally complete: it uses the shared library, supports the required knobs/commands, includes CHANGED_FILES scoping, and has scenario coverage plus install/README wiring. Validation shows the two go-agent scenarios pass and `shellcheck --severity=warning` is clean.
 
 BLOCKERS:
 None
@@ -204,8 +188,7 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-- `skills/bash-agent/scripts/bash-agent.sh` intentionally omits `setup_lock`, so concurrent invocations can run without serialization. While low-risk for read-only checks, this diverges from the common agent pattern (`setup_lock` is used by other agents and documented as standard).
-- `skills/bash-agent/scripts/bash-agent.sh` only tokenizes `CHANGED_FILES` with shell splitting; file paths containing spaces are not reliably supported when using scoped runs.
+- [ ] `skills/go-agent/scripts/go-agent.sh:156` — `run_fmt` ignores `gofmt` command status in check mode (`|| true`), so syntax/IO failures from `gofmt -l` can be treated as pass if stdout is empty. Capture and fail on command failure separately from formatting-diff detection.
 
 NEXT STEPS:
 Proceed to next spec
@@ -439,189 +422,15 @@ Make opinionated recommendations based on the lessons provided. Do NOT ask quest
 
 mcp startup: no servers
 codex
-I’ll quickly map the existing agent framework and current shared conventions first, then capture current patterns for cargo/npm/terra scenarios, install wiring, and any prior `go-agent` scaffolding. After that I’ll draft the plan and write `.ralph/work-plan.txt` plus updated exploration notes.
+Got it. I’ll first inspect the existing agent/runner patterns and test scaffolding in parallel (agent scripts, scenario fixtures, install/README wiring, and any existing `exploration.md`), then I’ll draft `.ralph/exploration.md`, write `.ralph/work-plan.txt` with the required checklist/sections, and finish by running `ralph validate plan` and recording any high-leverage insights.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && test -f .ralph/exploration.md && echo 'EXISTS' || echo 'MISSING'" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' AGENTS.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg --files tests | rg 'bash-agent|cargo-agent|npm-agent|terra-agent|tests/run-scenarios.sh'" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && rg --files skills | rg '(bash-agent|cargo-agent|terraform-agent|terra-agent|npm-agent|npm|agent)/scripts|SKILL.md'" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && rg --files .ralph | head -n 200' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-EXISTS
- succeeded in 52ms:
-# x-agent Contributor Guide
-
-This repository contains lean workflow runners for coding agents.
-Read this file first, then open only the linked docs you need.
-
-## Quick Rules
-
-- **Bash 3.2 compatible** — no associative arrays, no `readarray`, no `|&`. Optimized for stock macOS.
-- Keep output concise and structured (`Step`, `Result`, `Fix`, `Overall`, log path).
-- Support shared knobs (`RUN_<STEP>`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`).
-- Every `Result: FAIL` must include a `Fix:` hint.
-- The `help`/`--help`/`-h` command must work without project context — resolve it before any project-existence checks.
-- `shellcheck --severity=warning` must pass on all scripts.
-- Ship one backlog item per commit.
-
-## Testing
-
-Run `tests/run-scenarios.sh` — it runs shellcheck then all scenario fixtures.
-Each agent needs `clean` (pass) and `issues` (fail) fixtures. CI runs the
-same script across tool-combination matrices (e.g. with/without nextest).
- succeeded in 52ms:
-.ralph/exploration.md
-.ralph/commit.md
-.ralph/task.md
-.ralph/plan-agent.log
-.ralph/history/iteration-6-exploration.txt
-.ralph/history/iteration-1-work-plan.txt
-.ralph/history/iteration-9-exploration.txt
-.ralph/history/iteration-3-review-result.txt
-.ralph/history/iteration-6-review-result.txt
-.ralph/history/iteration-6-work-plan.txt
-.ralph/history/iteration-1-exploration.txt
-.ralph/history/iteration-7-exploration.txt
-.ralph/history/iteration-9-work-plan.txt
-.ralph/history/iteration-9-review-result.txt
-.ralph/history/iteration-4-exploration.txt
-.ralph/history/iteration-7-work-plan.txt
-.ralph/history/iteration-3-work-plan.txt
-.ralph/history/iteration-4-work-plan.txt
-.ralph/history/iteration-3-exploration.txt
-.ralph/review-agent.log
- succeeded in 53ms:
-tests/run-scenarios.sh
-tests/npm-agent/issues/scenario.env
-tests/npm-agent/issues/package.json
-tests/npm-agent/clean/src/index.js
-tests/npm-agent/clean/test/basic.test.js
-tests/npm-agent/clean/scripts/lint-check.js
-tests/npm-agent/clean/scripts/typecheck-check.js
-tests/npm-agent/clean/scripts/format-check.js
-tests/npm-agent/clean/scripts/build.js
-tests/npm-agent/clean/scenario.env
-tests/npm-agent/clean/package.json
-tests/terra-agent/issues/scenario.env
-tests/terra-agent/issues/main.tf
-tests/cargo-agent/issues/Cargo.toml
-tests/cargo-agent/issues/scenario.env
-tests/cargo-agent/issues/src/lib.rs
-tests/terra-agent/clean/scenario.env
-tests/terra-agent/clean/main.tf
-tests/cargo-agent/test-fail/Cargo.toml
-tests/cargo-agent/test-fail/scenario.env
- succeeded in 53ms:
-skills/py-agent/SKILL.md
-skills/py-agent/scripts/py-agent.sh
-skills/npm-agent/SKILL.md
-skills/npm-agent/scripts/npm-agent.sh
-skills/cargo-agent/SKILL.md
-skills/cargo-agent/scripts/cargo-agent.sh
-skills/bash-agent/SKILL.md
-skills/bash-agent/scripts/bash-agent.sh
-skills/terra-agent/SKILL.md
-skills/terra-agent/scripts/terra-agent.sh
-codex
-I found the core agent directories and fixtures. Next I’m pulling the shared conventions, runner internals, and existing agent scripts/tests in parallel so the plan matches project patterns exactly.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' docs/agents/definition-of-done.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ls lib' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' docs/agents/add-x-agent.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,280p' docs/agents/scenario-tests.md" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-x-agent-common.sh
- succeeded in 50ms:
-# Add an x-agent
-
-Use this workflow when adding a new `*-agent` skill and runner script.
-
-## 1) Create the skill skeleton
-
-Required files:
-
-```text
-skills/<name>-agent/
-  SKILL.md
-  scripts/<name>-agent.sh
-```
-
-Keep naming consistent:
-
-- Skill name: `<name>-agent`
-- Script name: `<name>-agent.sh`
-- Temp log prefix: `<name>-agent.XXXXXX`
-
- succeeded in 52ms:
-# Definition of Done for a New x-agent
-
-An agent is done only when all items below are complete.
-
-## Skill and Script
-
-- `skills/<name>-agent/SKILL.md` exists with accurate trigger language.
-- `skills/<name>-agent/SKILL.md` `allowed-tools` includes patterns for all env knobs (`RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, plus any agent-specific knobs).
-- `skills/<name>-agent/scripts/<name>-agent.sh` exists and is executable.
-- Script starts with `set -euo pipefail`.
-- Script has `--help`/`help`/`-h` usage output that works without project context (resolved before project-existence checks).
-
-## Output Contract
-
-- Each step emits `Step:`, `Result: PASS|FAIL|SKIP`, and `Time: Xs`.
-- Each `Result: FAIL` is followed by a `Fix:` line — suggests an auto-fix command first (if one exists), then tells how to retest via the agent.
-- On failure, prints truncated diagnostics (first `MAX_LINES` lines) and saves full logs to disk with path printed.
-- Final output is `Overall: PASS|FAIL` and `Logs: <path>`.
-
-## Behavior
- succeeded in 52ms:
-# x-agent Exploration Notes
-
-## Key Files & Roles
-
-- `lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
-- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
-- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
-- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
-- `skills/bash-agent/scripts/bash-agent.sh`: Bash/Shell agent sourcing `lib/x-agent-common.sh`; runs `bash -n` syntax checking and `shellcheck` linting with severity control. Uses `print_result` from shared lib for step output.
-- `skills/bash-agent/SKILL.md`: trigger metadata and allowed tool declarations for shell script checks, including `SHELLCHECK_SEVERITY` knob.
-- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment. Excludes `tests/*/issues/*` from project-wide shellcheck scan since issue fixtures are intentionally bad.
-- `tests/bash-agent/`: clean/issues fixture set; clean has `scripts/good.sh` (valid script), issues has `scripts/bad.sh` (SC2034/SC2154 shellcheck warnings).
-- `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
-- `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
-- `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
-- `docs/agents/add-x-agent.md`: canonical structure guide for script boilerplate, helpers, output contract, and agent metadata.
-- `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
-- `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
-- `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
-- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
- succeeded in 51ms:
-# Scenario Tests
-
-Scenario tests provide fixture projects that run each agent in known states.
-
-## Directory Layout
-
-```text
-tests/
-  run-scenarios.sh
-  <agent-name>/
-    clean/
-      scenario.env
-      ...fixture files...
-    issues/
-      scenario.env
-      ...fixture files...
-```
-
-## scenario.env contract
-
-codex
-I’ve confirmed existing guidance files and now I’m reading the shared library plus representative agent scripts to pin down exact helper usage, step patterns, and CHANGED_FILES scoping behavior before drafting the go-agent plan.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' skills/bash-agent/scripts/bash-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+/bin/zsh -lc "sed -n '1,260p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,360p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,240p' skills/cargo-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "if [ -f .ralph/exploration.md ]; then echo \"EXPLORATION_EXISTS\"; sed -n '1,220p' .ralph/exploration.md; else echo \"EXPLORATION_MISSING\"; fi" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -642,28 +451,28 @@ RUN_CHECK="${RUN_CHECK:-1}"       # set to 0 to skip check
 RUN_SQLX="${RUN_SQLX:-1}"         # set to 0 to skip sqlx cache verify
 USE_NEXTEST="${USE_NEXTEST:-auto}" # auto|1|0
 RUN_INTEGRATION="${RUN_INTEGRATION:-0}" # set to 1 to run integration tests
- succeeded in 51ms:
-#!/usr/bin/env bash
-# x-agent-common.sh — shared boilerplate for x-agent workflow runners.
-# Source this file from agent scripts; it produces no output or side effects.
-# Bash 3.2 compatible.
+ succeeded in 52ms:
+#!/bin/sh
+set -eu
 
-# ---------------------------------------------------------------------------
-# Environment defaults (agent can override after sourcing)
-# ---------------------------------------------------------------------------
+# x-agent installer: installs agent-friendly workflow scripts and Claude/Codex skills.
+# Works via: curl -sSf <raw-url>/install.sh | sh
+# Or locally: sh install.sh
 
-KEEP_DIR="${KEEP_DIR:-0}"
-FAIL_FAST="${FAIL_FAST:-0}"
-CHANGED_FILES="${CHANGED_FILES:-}"
-TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
+PROJECT_NAME="x-agent"
+REPO_OWNER="${X_AGENT_REPO_OWNER:-codesoda}"
+REPO_NAME="${X_AGENT_REPO_NAME:-x-agent}"
+REPO_REF="${X_AGENT_REPO_REF:-main}"
+RAW_BASE="${X_AGENT_RAW_BASE:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}}"
 
-# CI-aware MAX_LINES: unlimited in CI, concise locally.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
- succeeded in 51ms:
+CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+
+AUTO_YES=0
+SKIP_DEPS=0
+INSTALL_CODEX=1
+INSTALL_CLAUDE=1
+ succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -684,27 +493,27 @@ RUN_BUILD="${RUN_BUILD:-1}"       # set to 0 to skip build
 
 setup_outdir "npm-agent"
 
- succeeded in 50ms:
+ succeeded in 51ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash-agent: lean shell script validation for coding agents
-# deps: bash, shellcheck
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LIB_DIR="${SCRIPT_DIR}/../../../lib"
-# shellcheck source=../../../lib/x-agent-common.sh
-source "${LIB_DIR}/x-agent-common.sh"
-
-# ---- Agent-specific knobs ------------------------------------------------
-
-RUN_SYNTAX="${RUN_SYNTAX:-1}"
-RUN_LINT="${RUN_LINT:-1}"
-SHELLCHECK_SEVERITY="${SHELLCHECK_SEVERITY:-warning}"
-
-# ---- Usage ----------------------------------------------------------------
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TESTS_DIR="${ROOT_DIR}/tests"
+LOG_DIR="${TESTS_DIR}/.logs"
 
 usage() {
+  cat <<'EOF'
+Run x-agent scenario fixtures.
+
+Usage:
+  tests/run-scenarios.sh [FILTER]
+  tests/run-scenarios.sh --list
+  tests/run-scenarios.sh --help
+
+Examples:
+  tests/run-scenarios.sh
+  tests/run-scenarios.sh cargo-agent
+  tests/run-scenarios.sh npm-agent/issues
  succeeded in 51ms:
 #!/usr/bin/env bash
 set -euo pipefail
@@ -726,81 +535,7 @@ RUN_PLAN_SAFE="${RUN_PLAN_SAFE:-0}"    # set to 1 to run plan-safe in all
 FMT_MODE="${FMT_MODE:-check}"          # check|fix
 FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
 TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
-codex
-I now have the core helper patterns and can see one important gap from previous feedback. I’m pulling the command/dispatch sections, SKILL metadata, and install/test harness details to lock in exact compatibility requirements for the go-agent plan.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '260,520p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/cargo-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/terra-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/bash-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '320,520p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/npm-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' README.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-  echo "TF_DATA_DIR: $TF_DATA_DIR_PATH"
-  if [[ "$ok" == "1" ]]; then
-    echo "Changes detected: $([[ "$changed" == "1" ]] && echo yes || echo no)"
-  fi
-
-  if [[ "$ok" == "0" ]]; then
-    if [[ -s "$init_log" ]]; then
-      echo
-      echo "Init output (first ${MAX_LINES} lines):"
-      head -n "$MAX_LINES" "$init_log"
-    fi
-    if [[ -s "$log" ]]; then
-      echo
-      echo "Plan output (first ${MAX_LINES} lines):"
-      head -n "$MAX_LINES" "$log"
-    fi
-  fi
-
-  echo
-  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
- succeeded in 50ms:
-
-  if [[ -s "$diags" ]]; then
-    echo
-    echo "Diagnostics (first ${MAX_LINES} lines):"
-    head -n "$MAX_LINES" "$diags"
-  fi
-
-  echo
-  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
-  [[ "$ok" == "0" ]] && echo "Fix: resolve the errors above, then re-run: /cargo-agent clippy"
-  echo "Full JSON: $json"
-  echo "Lean diags: $diags"
-  fmt_elapsed
-  [[ "$ok" == "1" ]]
-}
-
-run_sqlx_verify() {
-  step "sqlx-cache"
-
-  # Skip if the project doesn't use sqlx.
- succeeded in 50ms:
----
-name: terra-agent
-description: |
-  Run terra-agent.sh — a lean Terraform workflow runner that reports formatting/validation status
-  and can also auto-fix Terraform formatting.
-  Use when: running Terraform fmt checks, auto-fixing fmt, safe init, safe plan, validate, or optional tflint checks.
-  Triggers on: terra agent, terraform fmt check, terraform fmt fix, terraform init, terraform plan, terraform validate, run terraform checks.
-context: fork
-allowed-tools:
-  - Bash(scripts/terra-agent.sh*)
-  - Bash(RUN_*=* scripts/terra-agent.sh*)
-  - Bash(MAX_LINES=* scripts/terra-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/terra-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/terra-agent.sh*)
-  - Bash(FMT_MODE=* scripts/terra-agent.sh*)
-  - Bash(TERRAFORM_CHDIR=* scripts/terra-agent.sh*)
-  - Bash(TF_CHDIR=* scripts/terra-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/terra-agent.sh*)
----
-
- succeeded in 50ms:
+ succeeded in 52ms:
 ---
 name: cargo-agent
 description: |
@@ -821,407 +556,8 @@ allowed-tools:
 ---
 
 # Cargo Agent
- succeeded in 50ms:
----
-name: bash-agent
-description: |
-  Run bash-agent.sh — a lean shell script validation runner that produces agent-friendly output.
-  Use when: running shell/bash script checks (syntax, lint), verifying shell scripts before committing,
-  or when the user asks to run shellcheck, bash checks, or validate shell scripts.
-  Triggers on: bash agent, shell agent, shellcheck, bash lint, shell checks, verify shell scripts.
-context: fork
-allowed-tools:
-  - Bash(scripts/bash-agent.sh*)
-  - Bash(RUN_*=* scripts/bash-agent.sh*)
-  - Bash(SHELLCHECK_SEVERITY=* scripts/bash-agent.sh*)
-  - Bash(MAX_LINES=* scripts/bash-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/bash-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/bash-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/bash-agent.sh*)
----
-
-# Bash Agent
-
- succeeded in 51ms:
----
-name: npm-agent
-description: |
-  Run npm-agent.sh — a lean Node.js workflow runner that produces agent-friendly output.
-  Use when: running JS/TS checks (format, lint, typecheck, test, build), verifying Node code before committing,
-  or when the user asks to run npm/yarn/pnpm/bun checks, lint, format, or test a Node.js project.
-  Triggers on: npm agent, run npm checks, node checks, lint and test, verify node code, run js checks.
-context: fork
-allowed-tools:
-  - Bash(scripts/npm-agent.sh*)
-  - Bash(RUN_*=* scripts/npm-agent.sh*)
-  - Bash(MAX_LINES=* scripts/npm-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/npm-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/npm-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/npm-agent.sh*)
----
-
-# NPM Agent
-
-Run the `npm-agent.sh` script for lean, structured Node.js workflow output designed for coding agents.
- succeeded in 50ms:
-# x-agent
-
-Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
-
-## Why?
-
-Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
-
-- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
-- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
-- **Full logs on disk** — temp dir path printed so the agent can read more if needed
-- **Consistent interface** — same env knobs and output format across all runners
-
-## Available Agents
-
-| Agent | Toolchain | Steps |
-|-------|-----------|-------|
-| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
-| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
-| `npm-agent` | Node.js | format, lint, typecheck, test, build |
- succeeded in 50ms:
-#!/bin/sh
-set -eu
-
-# x-agent installer: installs agent-friendly workflow scripts and Claude/Codex skills.
-# Works via: curl -sSf <raw-url>/install.sh | sh
-# Or locally: sh install.sh
-
-PROJECT_NAME="x-agent"
-REPO_OWNER="${X_AGENT_REPO_OWNER:-codesoda}"
-REPO_NAME="${X_AGENT_REPO_NAME:-x-agent}"
-REPO_REF="${X_AGENT_REPO_REF:-main}"
-RAW_BASE="${X_AGENT_RAW_BASE:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}}"
-
-CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
-CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-
-AUTO_YES=0
-SKIP_DEPS=0
-INSTALL_CODEX=1
-INSTALL_CLAUDE=1
- succeeded in 50ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TESTS_DIR="${ROOT_DIR}/tests"
-LOG_DIR="${TESTS_DIR}/.logs"
-
-usage() {
-  cat <<'EOF'
-Run x-agent scenario fixtures.
-
-Usage:
-  tests/run-scenarios.sh [FILTER]
-  tests/run-scenarios.sh --list
-  tests/run-scenarios.sh --help
-
-Examples:
-  tests/run-scenarios.sh
-  tests/run-scenarios.sh cargo-agent
-  tests/run-scenarios.sh npm-agent/issues
-codex
-I’ve captured most harness behavior. I’ll do one more pass for remaining agent patterns (especially command dispatch and any CHANGED_FILES mapping heuristics) so the plan reflects mature conventions, not assumptions.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '520,760p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/py-agent/scripts/py-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/cargo-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '320,620p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/terra-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/terra-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/cargo-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/npm-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/npm-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 50ms:
-SCENARIO_NAME="terra-agent fmt issues"
-AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
-RUN_ARGS="fmt-check"
-EXPECT_EXIT="1"
-REQUIRED_TOOLS="terraform"
-
- succeeded in 51ms:
-  shift 2>/dev/null || true
-  local overall_ok=1
-
-  # Verify we're in a Node.js project
-  if [[ ! -f "package.json" ]]; then
-    echo "Error: no package.json found in current directory" >&2
-    exit 2
-  fi
-
-  case "$cmd" in
-    -h|--help|help) usage; exit 0 ;;
-    format)    run_format    || overall_ok=0 ;;
-    lint)      run_lint      || overall_ok=0 ;;
-    typecheck) run_typecheck || overall_ok=0 ;;
-    test)      run_tests     || overall_ok=0 ;;
-    build)     run_build     || overall_ok=0 ;;
-    all)
-      if [[ "$RUN_FORMAT" == "1" ]] && should_continue; then run_format || overall_ok=0; fi
-      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
-      if [[ "$RUN_TYPECHECK" == "1" ]] && should_continue; then run_typecheck || overall_ok=0; fi
- succeeded in 53ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# py-agent: lean Python workflow output for coding agents
-# deps: bash, mktemp
-# optional: ruff, black, mypy, pyright, pytest
-
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
-RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
-RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
-RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
-RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
-FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
-CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
- succeeded in 53ms:
-SCENARIO_NAME="cargo-agent clean"
-AGENT_SCRIPT="skills/cargo-agent/scripts/cargo-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="0"
-REQUIRED_TOOLS="cargo jq"
-
- succeeded in 50ms:
-SCENARIO_NAME="terra-agent clean"
-AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="0"
-REQUIRED_TOOLS="terraform"
-
- succeeded in 53ms:
-
-Flags:
-  --fail-fast            stop after first failing step; also passed to nextest
-
-Env knobs:
-  MAX_LINES=40           # printed lines per step (unlimited in CI)
-  KEEP_DIR=0|1           # keep temp log dir even on success
-  FAIL_FAST=0|1          # same as --fail-fast flag
-  RUN_FMT=0|1
-  CI=true|1             # fmt runs in check mode on CI, fix mode locally
-  RUN_CHECK=0|1
-  RUN_CLIPPY=0|1
-  RUN_SQLX=0|1
-  RUN_TESTS=0|1
-  RUN_INTEGRATION=0|1  # enable integration tests (requires DB/network)
-  USE_NEXTEST=auto|1|0
-  CHANGED_FILES="f1 f2"   # scope check/clippy/test to affected packages
-
-Examples:
-  cargo-agent                          # full suite
- succeeded in 50ms:
-SCENARIO_NAME="cargo-agent issues"
-AGENT_SCRIPT="skills/cargo-agent/scripts/cargo-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="1"
-REQUIRED_TOOLS="cargo jq"
-
  succeeded in 52ms:
-SCENARIO_NAME="npm-agent issues"
-AGENT_SCRIPT="skills/npm-agent/scripts/npm-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="1"
-REQUIRED_TOOLS="node npm"
-
- succeeded in 52ms:
-SCENARIO_NAME="npm-agent clean"
-AGENT_SCRIPT="skills/npm-agent/scripts/npm-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="0"
-REQUIRED_TOOLS="node npm"
-
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '320,620p' install.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-    else
-      warn "  Missing: node (needed by npm-agent)"
-      all_ok=0
-    fi
-  fi
-
-  if skill_selected "py-agent"; then
-    if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
-      info "  Found: python"
-    else
-      warn "  Missing: python3 (needed by py-agent)"
-      all_ok=0
-    fi
-
-    for dep in ruff black; do
-      if command -v "$dep" >/dev/null 2>&1; then
-        info "  Found: ${dep}"
-        break
-      fi
-    done
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '220,360p' install.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-    info "Fetching skills/${skill}/scripts/${script_name}..."
-    if ! fetch_to_file "$src_url" "$dest"; then
-      die "Unable to download ${src_url}"
-    fi
-    chmod +x "$dest"
-  done
-}
-
-# Install a single skill to a skills root, with scripts alongside it.
-install_skill_to_root() {
-  root="$1"
-  skill="$2"
-  target="${root}/${skill}"
-
-  mkdir -p "$root"
-  rm -rf "$target"
-
-  if [ "$SOURCE_MODE" = "local" ]; then
-    ln -s "${SOURCE_DIR}/skills/${skill}" "$target"
-    info "Symlinked ${skill} to ${target} -> ${SOURCE_DIR}/skills/${skill}"
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/specs/04-go-agent.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Spec 04: go-agent
-
-## Objective
-
-Create a new go-agent that checks Go formatting, runs vet/lint, and executes tests.
-
-## Source
-
-- **PRD User Story:** US-003
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
-
-## User Story Context
-
-> As a developer, I want a go-agent that checks formatting, runs vet/lint, and executes tests so I can validate Go code before CI.
-
-## Functional Requirements
-
-- FR-1: Sources `lib/x-agent-common.sh`
-- FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_FMT, RUN_VET, RUN_STATICCHECK, RUN_TESTS)
-codex
-I’ve now got the go-agent spec and framework docs. I’ll quickly scan the shared-library and refactor specs (01/02) to ensure this plan aligns with prior and upcoming implementation expectations.
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/history/iteration-9-exploration.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' .ralph/task.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' .ralph/history/iteration-6-work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/specs/01-shared-library-extract.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/specs/02-refactor-existing-agents.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/README.md" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-# RALPH Loop - Project Guide
-
-**Welcome to your RALPH (Recursive Autonomous Loop with Planning & Human-oversight) development environment!**
-
-This project uses an autonomous AI development loop that breaks down requirements into discrete specifications and implements them iteratively with automated planning, implementation, and review cycles.
-
-## Overview
-
-RALPH loop is a three-phase iterative development cycle:
-
-```
-┌─────────────────────────────────────────────────────┐
-│  PLAN Phase (Codex)                                 │
-│  • Analyze spec                                     │
-│  • Create detailed work plan                        │
-│  • Identify risks and dependencies                  │
-└─────────────────┬───────────────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────────────┐
-│  WORK Phase (Claude Code)                           │
- succeeded in 53ms:
-# Spec 01: Extract Shared Library
-
-## Objective
-
-Create `lib/x-agent-common.sh` containing all boilerplate functions duplicated across existing agents. This is a new additive file — no existing agents are modified in this spec.
-
-## Source
-
-- **PRD User Story:** US-001 (partial — extraction only, refactor in spec 02)
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10
-
-## User Story Context
-
-> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
-
-This spec covers only the creation of the shared library. The refactoring of existing agents to use it is in spec 02.
-
-## Functional Requirements
-
-- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
- succeeded in 53ms:
-# Task: x-agent Backlog — Shared Library + 8 New Agents
-
-## Overview
-
-Extract shared boilerplate from existing agents into a common library, then ship 8 new workflow runner agents. Each agent follows the established pattern: SKILL.md, bash script sourcing the shared lib, scenario tests, and install.sh integration.
-
-## Goals
-
-- Extract duplicated boilerplate into `lib/x-agent-common.sh`
-- Refactor existing agents (cargo, npm, terra) to source the shared library
-- Ship 8 new agents with full scenario tests and documentation
-- Every agent supports fix/auto-format where the underlying tool provides it
-- Maintain Bash 3.2 compatibility and structured output contract
-
-## Success Metrics
-
-- All 8 new agents pass their scenario tests (clean + issues fixtures)
-- Existing agents pass their scenario tests after shared library refactor
-- `shellcheck --severity=warning` passes on all scripts including `lib/x-agent-common.sh`
-- Each new agent script is under ~200 lines of domain-specific code
- succeeded in 53ms:
-## Implementation Checklist
-- [x] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
-- [x] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
-- [x] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
-- [x] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
-- [x] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
-- [x] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
-- [x] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
-- [x] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
-- [x] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
-- [x] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
-- [x] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
-- [x] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-
-## Architecture Review
-
-### System Boundaries
-
-The runtime is split into three layers.
- succeeded in 52ms:
-# Spec 02: Refactor Existing Agents to Use Shared Library
-
-## Objective
-
-Refactor cargo-agent, npm-agent, and terra-agent to source `lib/x-agent-common.sh` instead of duplicating boilerplate. Output must be identical before and after.
-
-## Source
-
-- **PRD User Story:** US-001 (completion — refactor portion)
-- **Functional Requirements:** FR-1
-
-## User Story Context
-
-> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
-
-This spec completes US-001 by refactoring the three existing agents to use the shared lib created in spec 01.
-
-## Functional Requirements
-
-- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
- succeeded in 53ms:
+EXPLORATION_EXISTS
 # x-agent Exploration Notes
 
 ## Key Files & Roles
@@ -1241,14 +577,82 @@ This spec completes US-001 by refactoring the three existing agents to use the s
 - `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
 - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
 - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
-- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
 codex
-I’ve got enough architecture context. Next I’m checking existing `.ralph` learning logs to avoid duplicate entries and decide whether this spec yields any high-leverage reusable automation opportunities before I write the plan and insight records.
+I’ve pulled the core patterns already; next I’m filling in the shared library and test/fixture conventions so the plan can reference exact flow points, dependencies, and what to validate for `gha-agent` specifically.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tail -n 30 .ralph/lessons.jsonl' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tail -n 30 .ralph/ralph-actions.jsonl' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' docs/testing.md" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+/bin/zsh -lc "sed -n '1,260p' docs/agents/scenario-tests.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,360p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' docs/testing.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'find tests/gha-agent -maxdepth 2 -type f 2>/dev/null | sort' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/bash-agent/clean/scenario.env && printf '
+---
+' && sed -n '1,220p' tests/bash-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+
+ succeeded in 52ms:
+# Scenario Tests
+
+Scenario tests provide fixture projects that run each agent in known states.
+
+## Directory Layout
+
+```text
+tests/
+  run-scenarios.sh
+  <agent-name>/
+    clean/
+      scenario.env
+      ...fixture files...
+    issues/
+      scenario.env
+      ...fixture files...
+```
+
+## scenario.env contract
+
+ succeeded in 52ms:
+# x-agent
+
+Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+
+## Why?
+
+Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
+
+- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
+- **Full logs on disk** — temp dir path printed so the agent can read more if needed
+- **Consistent interface** — same env knobs and output format across all runners
+
+## Available Agents
+
+| Agent | Toolchain | Steps |
+|-------|-----------|-------|
+| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
+| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+| `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
+ succeeded in 52ms:
+#!/usr/bin/env bash
+# x-agent-common.sh — shared boilerplate for x-agent workflow runners.
+# Source this file from agent scripts; it produces no output or side effects.
+# Bash 3.2 compatible.
+
+# ---------------------------------------------------------------------------
+# Environment defaults (agent can override after sourcing)
+# ---------------------------------------------------------------------------
+
+KEEP_DIR="${KEEP_DIR:-0}"
+FAIL_FAST="${FAIL_FAST:-0}"
+CHANGED_FILES="${CHANGED_FILES:-}"
+TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
+
+# CI-aware MAX_LINES: unlimited in CI, concise locally.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
+ succeeded in 52ms:
 # Testing
 
 All testing — local and CI — runs through `tests/run-scenarios.sh`.
@@ -1269,57 +673,48 @@ tests/run-scenarios.sh shellcheck
 tests/run-scenarios.sh --list
 ```
 
- exited 1 in 53ms:
-tail: .ralph/lessons.jsonl: No such file or directory
- succeeded in 53ms:
-# Automation Opportunities for x-agent
+ succeeded in 51ms:
+SCENARIO_NAME="bash-agent clean"
+AGENT_SCRIPT="skills/bash-agent/scripts/bash-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT="0"
+REQUIRED_TOOLS="bash shellcheck"
 
-## [2026-03-08T16:59:00Z] output-parity-diff
-
-**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
-
-**Priority**: HIGH
-
-**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in `Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
-
-**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
-
-**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
-
-**Status**: PENDING
-
-## [2026-03-08T17:08:28Z] review-work-plan-checklist
-
-**Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
-
- succeeded in 53ms:
-{"timestamp":"2026-03-08T17:13:51.427992+00:00","agent":"claude","type":"BashExec","target":"shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh 2>&1; echo \"exit: $?\"","status":"started","tool":"Bash","parameters":{"command":"shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh 2>&1; echo \"exit: $?\"","description":"Final shellcheck on bash-agent.sh"}}
-{"timestamp":"2026-03-08T17:13:51.876764+00:00","agent":"claude","type":"BashExec","target":"sh install.sh --help >/dev/null 2>&1; echo \"exit: $?\"","status":"started","tool":"Bash","parameters":{"command":"sh install.sh --help >/dev/null 2>&1; echo \"exit: $?\"","description":"Verify install.sh syntax"}}
-{"timestamp":"2026-03-08T17:13:56.778383+00:00","agent":"claude","type":"BashExec","target":"bash tests/run-scenarios.sh 2>&1","status":"started","tool":"Bash","parameters":{"command":"bash tests/run-scenarios.sh 2>&1","description":"Run all scenario tests","timeout":120000}}
-{"timestamp":"2026-03-08T17:14:38.085449+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","limit":30}}
-{"timestamp":"2026-03-08T17:14:41.662348+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Grep","parameters":{"output_mode":"content","path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","pattern":"run_shellcheck|shellcheck"}}
-{"timestamp":"2026-03-08T17:14:45.440457+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","limit":20,"offset":120}}
-{"timestamp":"2026-03-08T17:14:54.680759+00:00","agent":"claude","type":"BashExec","target":"find /Users/chrisraethke/projects/x-agent/tests -name '*.sh' 2>/dev/null","status":"started","tool":"Bash","parameters":{"command":"find /Users/chrisraethke/projects/x-agent/tests -name '*.sh' 2>/dev/null","description":"Find all .sh files in tests"}}
-{"timestamp":"2026-03-08T17:15:04.803184+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","limit":5,"offset":126}}
-{"timestamp":"2026-03-08T17:15:10.051419+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","new_string":"  done < <(find \"$ROOT_DIR/skills\" -name '*.sh' -print0; find \"$ROOT_DIR/lib\" -name '*.sh' -print0 2>/dev/null; find \"$TESTS_DIR\" -name '*.sh' -not -path '*/issues/*' -print0; find \"$ROOT_DIR\" -maxdepth 1 -name '*.sh' -print0)","old_string":"  done < <(find \"$ROOT_DIR/skills\" -name '*.sh' -print0; find \"$ROOT_DIR/lib\" -name '*.sh' -print0 2>/dev/null; find \"$TESTS_DIR\" -name '*.sh' -print0; find \"$ROOT_DIR\" -maxdepth 1 -name '*.sh' -print0)","replace_all":false}}
-{"timestamp":"2026-03-08T17:15:13.377282+00:00","agent":"claude","type":"BashExec","target":"bash tests/run-scenarios.sh 2>&1","status":"started","tool":"Bash","parameters":{"command":"bash tests/run-scenarios.sh 2>&1","description":"Run full scenario test suite","timeout":120000}}
-{"timestamp":"2026-03-08T17:16:09.652596+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Write","parameters":{"content":"## Implementation Checklist\n- [x] 1. Confirm shared-library patterns and existing helper contracts are reused (`lib/x-agent-common.sh`, `setup_outdir`, `setup_lock`, `print_overall`) and no per-agent exception handling is introduced in bash-agent.\n- [x] 2. Create `skills/bash-agent/scripts/bash-agent.sh` with shared-lib sourcing, required knobs, and command dispatch structure that supports `syntax`, `lint`, `all`, `--fail-fast`, `help`, and unknown-command handling.\n- [x] 3. Implement `.sh` discovery logic with explicit behavior for `CHANGED_FILES` and recursive scan fallback, including `.git`, `node_modules`, and `vendor` exclusion.\n- [x] 4. Implement `run_syntax` step using `bash -n` across discovered files, aggregate full diagnostics to a per-step log, and print truncated output + `Fix:` hint on failure.\n- [x] 5. Implement `run_lint` step using `shellcheck --severity=${SHELLCHECK_SEVERITY}` across discovered files, aggregate logs, and produce shellcheck wiki link(s) in `Fix:` on failure.\n- [x] 6. Ensure command path supports `SHELLCHECK_SEVERITY` override and default severity semantics while keeping required `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST` behavior intact.\n- [x] 7. Create `skills/bash-agent/SKILL.md` with trigger language and `allowed-tools` entries for RUN knobs, `SHELLCHECK_SEVERITY`, `CHANGED_FILES`, and shared controls.\n- [x] 8. Add scenario fixtures under `tests/bash-agent/clean` and `tests/bash-agent/issues`, including `scenario.env` and fixture scripts.\n- [x] 9. Validate fixture behavior: `clean` exits 0 with `shellcheck`+`bash` available, and `issues` exits 1 for intentional lint violation and/or shell syntax issue.\n- [x] 10. Update `install.sh` to include `bash-agent` in `SKILLS`, add optional dependency check messaging for `shellcheck`, and add `bash-agent` line to `print_agents_md_snippet`.\n- [x] 11. Update `README.md` with bash-agent row in Available Agents and usage examples showing `syntax`, `lint`, and `all`.\n- [x] 12. Run `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent` locally in validation slice, then fix and rerun until green.\n- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.\n- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS.\n","file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt"}}
-{"timestamp":"2026-03-08T17:16:12.804856+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","limit":15}}
-{"timestamp":"2026-03-08T17:16:16.397825+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 1.","old_string":"- [ ] 1.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:16.841513+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 2.","old_string":"- [ ] 2.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:17.836923+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 3.","old_string":"- [ ] 3.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:18.632344+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 4.","old_string":"- [ ] 4.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:19.055549+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 5.","old_string":"- [ ] 5.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:19.957581+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 6.","old_string":"- [ ] 6.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:20.914892+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 7.","old_string":"- [ ] 7.","replace_all":false}}
-{"timestamp":"2026-03-08T17:16:21.322206+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","new_string":"- [x] 8.","old_string":"- [ ] 8.","replace_all":false}}
+---
+SCENARIO_NAME="bash-agent issues"
+AGENT_SCRIPT="skills/bash-agent/scripts/bash-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT="1"
+REQUIRED_TOOLS="bash shellcheck"
 codex
-I noticed prior plans already documented repeated patterns and an existing “issues fixtures excluded from global shellcheck” requirement. I’ll now check CI/workflow docs and one existing Python agent script pattern so go-agent behavior stays consistent with repository-wide execution assumptions.
+I’ve now confirmed the common helper surface and test harness. I’m pulling a few more existing agent specs/scripts to mirror expected argument parsing, `--help`, and install wiring exactly before drafting the detailed plan.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' skills/py-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '260,520p' skills/py-agent/scripts/py-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' skills/py-agent/scripts/py-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,320p' .github/workflows/ci.yml" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+/bin/zsh -lc "sed -n '1,320p' skills/go-agent/scripts/go-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .github/workflows/ci.yml" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' install.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' skills/go-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' skills/bash-agent/SKILL.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+---
+name: go-agent
+description: |
+  Run go-agent.sh — a lean Go workflow runner that produces agent-friendly output.
+  Use when: running Go checks (fmt, vet, staticcheck, test), verifying Go code before committing,
+  or when the user asks to run go checks, lint, format, or test a Go project.
+  Triggers on: go agent, run go checks, golang checks, go fmt vet test, verify go code.
+context: fork
+allowed-tools:
+  - Bash(scripts/go-agent.sh*)
+  - Bash(RUN_*=* scripts/go-agent.sh*)
+  - Bash(FMT_MODE=* scripts/go-agent.sh*)
+  - Bash(MAX_LINES=* scripts/go-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/go-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/go-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/go-agent.sh*)
+---
+
+# Go Agent
+
+ succeeded in 53ms:
 name: CI – scenario tests
 
 on:
@@ -1341,47 +736,326 @@ jobs:
           shopt -s globstar
           shellcheck --severity=warning skills/*/scripts/*.sh tests/run-scenarios.sh tests/**/*.sh install.sh
  succeeded in 53ms:
-      ok=0
-    fi
-  fi
+#!/bin/sh
+set -eu
 
-  if [[ "$found" == "0" ]]; then
-    echo "Result: SKIP (no linter found — install ruff or flake8)"
-    fmt_elapsed
-    return 0
-  fi
+# x-agent installer: installs agent-friendly workflow scripts and Claude/Codex skills.
+# Works via: curl -sSf <raw-url>/install.sh | sh
+# Or locally: sh install.sh
 
-  if [[ "$ok" == "0" && -s "$log" ]]; then
-    echo
-    echo "Output (first ${MAX_LINES} lines):"
-    head -n "$MAX_LINES" "$log"
-  fi
+PROJECT_NAME="x-agent"
+REPO_OWNER="${X_AGENT_REPO_OWNER:-codesoda}"
+REPO_NAME="${X_AGENT_REPO_NAME:-x-agent}"
+REPO_REF="${X_AGENT_REPO_REF:-main}"
+RAW_BASE="${X_AGENT_RAW_BASE:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_REF}}"
 
-  echo
-  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
-  if [[ "$ok" == "0" ]]; then
-    if have_tool ruff; then
+CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+
+AUTO_YES=0
+SKIP_DEPS=0
+INSTALL_CODEX=1
+INSTALL_CLAUDE=1
+ succeeded in 53ms:
+---
+name: bash-agent
+description: |
+  Run bash-agent.sh — a lean shell script validation runner that produces agent-friendly output.
+  Use when: running shell/bash script checks (syntax, lint), verifying shell scripts before committing,
+  or when the user asks to run shellcheck, bash checks, or validate shell scripts.
+  Triggers on: bash agent, shell agent, shellcheck, bash lint, shell checks, verify shell scripts.
+context: fork
+allowed-tools:
+  - Bash(scripts/bash-agent.sh*)
+  - Bash(RUN_*=* scripts/bash-agent.sh*)
+  - Bash(SHELLCHECK_SEVERITY=* scripts/bash-agent.sh*)
+  - Bash(MAX_LINES=* scripts/bash-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/bash-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/bash-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/bash-agent.sh*)
+---
+
+# Bash Agent
+
  succeeded in 53ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
-# py-agent: lean Python workflow output for coding agents
-# deps: bash, mktemp
-# optional: ruff, black, mypy, pyright, pytest
+# go-agent: lean Go workflow runner for coding agents
+# deps: go (required), staticcheck (optional)
 
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
-RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
-RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
-RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
-RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
-FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
-CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
+# ---- Agent-specific knobs ------------------------------------------------
+
+RUN_FMT="${RUN_FMT:-1}"
+RUN_VET="${RUN_VET:-1}"
+RUN_STATICCHECK="${RUN_STATICCHECK:-1}"
+RUN_TESTS="${RUN_TESTS:-1}"
+FMT_MODE="${FMT_MODE:-auto}"
+
+# ---- Usage ----------------------------------------------------------------
+codex
+I’ve captured enough patterns for parsing and hooks; now I’m checking install/CI docs plus an existing single-step-style fixture to model where `gha-agent` will align with project conventions for discovery, registration, and minimal-footprint design.
+exec
+/bin/zsh -lc "sed -n '1,320p' docs/agents/definition-of-done.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '260,520p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .github/workflows/ci.yml | sed -n '520,760p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' tests/py-agent/clean/scenario.env && printf '
+---
+' && sed -n '1,280p' tests/py-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'find tests/py-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+tests/py-agent/clean/pyproject.toml
+tests/py-agent/clean/scenario.env
+tests/py-agent/clean/src/__init__.py
+tests/py-agent/clean/src/app.py
+tests/py-agent/clean/tests/__init__.py
+tests/py-agent/clean/tests/test_app.py
+tests/py-agent/issues/pyproject.toml
+tests/py-agent/issues/scenario.env
+tests/py-agent/issues/src/__init__.py
+tests/py-agent/issues/src/app.py
+tests/py-agent/issues/tests/__init__.py
+tests/py-agent/issues/tests/test_app.py
+ succeeded in 53ms:
+    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/lib/." "$target/"
+    info "Installed lib to ${target}"
+  fi
+}
+
+# Rewrite SKILL.md paths to point at the actual installed script location.
+patch_skill_paths() {
+  root="$1"
+  skill="$2"
+  skill_md="${root}/${skill}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then return; fi
+
+  # For local (symlink) installs, paths already point to the right place via the repo.
+  # For remote installs, update paths to point at the skill's bundled scripts dir.
+  if [ "$SOURCE_MODE" = "remote" ]; then
+    scripts_dir="${root}/${skill}/scripts"
+ succeeded in 53ms:
+
+ succeeded in 53ms:
+# Definition of Done for a New x-agent
+
+An agent is done only when all items below are complete.
+
+## Skill and Script
+
+- `skills/<name>-agent/SKILL.md` exists with accurate trigger language.
+- `skills/<name>-agent/SKILL.md` `allowed-tools` includes patterns for all env knobs (`RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, plus any agent-specific knobs).
+- `skills/<name>-agent/scripts/<name>-agent.sh` exists and is executable.
+- Script starts with `set -euo pipefail`.
+- Script has `--help`/`help`/`-h` usage output that works without project context (resolved before project-existence checks).
+
+## Output Contract
+
+- Each step emits `Step:`, `Result: PASS|FAIL|SKIP`, and `Time: Xs`.
+- Each `Result: FAIL` is followed by a `Fix:` line — suggests an auto-fix command first (if one exists), then tells how to retest via the agent.
+- On failure, prints truncated diagnostics (first `MAX_LINES` lines) and saves full logs to disk with path printed.
+- Final output is `Overall: PASS|FAIL` and `Logs: <path>`.
+
+## Behavior
+ succeeded in 53ms:
+SCENARIO_NAME="py-agent clean"
+AGENT_SCRIPT="skills/py-agent/scripts/py-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT="0"
+REQUIRED_TOOLS="python3"
+
+---
+SCENARIO_NAME="py-agent issues"
+AGENT_SCRIPT="skills/py-agent/scripts/py-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT="1"
+REQUIRED_TOOLS="python3"
+exec
+/bin/zsh -lc "sed -n '1,240p' docs/contributing.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' docs/agents/add-x-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' .ralph/specs/04-go-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg --files .ralph/specs | sed -n '1,200p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg --files .ralph | sed -n '1,120p'" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+# Spec 04: go-agent
+
+## Objective
+
+Create a new go-agent that checks Go formatting, runs vet/lint, and executes tests.
+
+## Source
+
+- **PRD User Story:** US-003
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a go-agent that checks formatting, runs vet/lint, and executes tests so I can validate Go code before CI.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_FMT, RUN_VET, RUN_STATICCHECK, RUN_TESTS)
+ succeeded in 52ms:
+# Contributing to x-agent
+
+Standards and conventions for working in this repository.
+
+## Tech Standards
+
+### Bash 3.2 Compatibility
+
+All shell scripts must work with **Bash 3.2**, which ships as the default
+on macOS. This means:
+
+- **No associative arrays** (`local -A` / `declare -A`) — use string variables
+  with `grep -Fxq` for dedup, or indexed arrays.
+- **No `${!arr[@]}` on associative arrays** — iterate indexed arrays or
+  newline-delimited strings instead.
+- **No `readarray` / `mapfile`** — use `while read` loops.
+- **No `|&`** (pipe stderr) — use `2>&1 |` instead.
+- **No `;&` or `;;&`** in `case` fall-through — each pattern must end with `;;`.
+- **Empty arrays are unbound under `set -u`** — guard with
+  `${arr[@]+"${arr[@]}"}` or check `${#arr[@]}` before expanding.
+ succeeded in 52ms:
+# Add an x-agent
+
+Use this workflow when adding a new `*-agent` skill and runner script.
+
+## 1) Create the skill skeleton
+
+Required files:
+
+```text
+skills/<name>-agent/
+  SKILL.md
+  scripts/<name>-agent.sh
+```
+
+Keep naming consistent:
+
+- Skill name: `<name>-agent`
+- Script name: `<name>-agent.sh`
+- Temp log prefix: `<name>-agent.XXXXXX`
+
+ succeeded in 53ms:
+.ralph/specs/01-shared-library-extract.md
+.ralph/specs/08-docker-agent.md
+.ralph/specs/04-go-agent.md
+.ralph/specs/03-bash-agent.md
+.ralph/specs/09-ansible-agent.md
+.ralph/specs/05-gha-agent.md
+.ralph/specs/10-sql-agent.md
+.ralph/specs/07-kube-agent.md
+.ralph/specs/02-refactor-existing-agents.md
+.ralph/specs/06-helm-agent.md
+ succeeded in 53ms:
+.ralph/exploration.md
+.ralph/commit.md
+.ralph/task.md
+.ralph/plan-agent.log
+.ralph/history/iteration-12-review-result.txt
+.ralph/history/iteration-6-exploration.txt
+.ralph/history/iteration-1-work-plan.txt
+.ralph/history/iteration-10-exploration.txt
+.ralph/history/iteration-9-exploration.txt
+.ralph/history/iteration-12-work-plan.txt
+.ralph/history/iteration-3-review-result.txt
+.ralph/history/iteration-6-review-result.txt
+.ralph/history/iteration-6-work-plan.txt
+.ralph/history/iteration-1-exploration.txt
+.ralph/history/iteration-7-exploration.txt
+.ralph/history/iteration-9-work-plan.txt
+.ralph/history/iteration-9-review-result.txt
+.ralph/history/iteration-12-exploration.txt
+.ralph/history/iteration-4-exploration.txt
+.ralph/history/iteration-7-work-plan.txt
+exec
+/bin/zsh -lc "sed -n '1,260p' .ralph/task.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/05-gha-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/work-summary.txt" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Task: x-agent Backlog — Shared Library + 8 New Agents
+
+## Overview
+
+Extract shared boilerplate from existing agents into a common library, then ship 8 new workflow runner agents. Each agent follows the established pattern: SKILL.md, bash script sourcing the shared lib, scenario tests, and install.sh integration.
+
+## Goals
+
+- Extract duplicated boilerplate into `lib/x-agent-common.sh`
+- Refactor existing agents (cargo, npm, terra) to source the shared library
+- Ship 8 new agents with full scenario tests and documentation
+- Every agent supports fix/auto-format where the underlying tool provides it
+- Maintain Bash 3.2 compatibility and structured output contract
+
+## Success Metrics
+
+- All 8 new agents pass their scenario tests (clean + issues fixtures)
+- Existing agents pass their scenario tests after shared library refactor
+- `shellcheck --severity=warning` passes on all scripts including `lib/x-agent-common.sh`
+- Each new agent script is under ~200 lines of domain-specific code
+ succeeded in 53ms:
+# Spec 05: gha-agent
+
+## Objective
+
+Create a new gha-agent that lints GitHub Actions workflow files using `actionlint`.
+
+## Source
+
+- **PRD User Story:** US-004
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a gha-agent that lints GitHub Actions workflow files so I can catch workflow errors before pushing.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT)
+ succeeded in 53ms:
+# Work Summary — Spec 04: go-agent
+
+## What was implemented
+
+Created the go-agent — a lean Go workflow runner that checks formatting (gofmt), runs vet/lint (go vet, staticcheck), and executes tests (go test).
+
+### Files created:
+- `skills/go-agent/scripts/go-agent.sh` — main agent script (~230 lines total, ~170 lines domain code)
+- `skills/go-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/go-agent/clean/scenario.env` + `go.mod` + `main.go` — passing fixture (valid formatted Go program)
+- `tests/go-agent/issues/scenario.env` + `go.mod` + `main.go` — failing fixture (`fmt.Printf("%d", "string")` vet issue)
+
+### Files modified:
+- `install.sh` — added `go-agent` to SKILLS, go/staticcheck dep checks, and snippet line
+- `README.md` — added go-agent row in Available Agents table, usage section, direct-use example, and skill reference
+
+## Deviations from work plan
+
+- **No `setup_lock` call**: go-agent does not use workflow locking. `gofmt`, `go vet`, and `go test` are read-only or idempotent operations without shared state requiring serialization. This matches bash-agent, npm-agent, and terra-agent which also don't use locks.
+- **Issue fixture uses vet issue only** (not formatting): Using `fmt.Printf("%d", "string")` which triggers `go vet` reliably. The code is already properly gofmt-formatted (gofmt doesn't care about semantic issues), so the failure comes from the vet step. This is more robust across Go versions than trying to create formatting issues.
+exec
+/bin/zsh -lc 'ls skills' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' skills/py-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' docs/agents/add-x-agent.md | sed -n '260,520p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,340p' skills/py-agent/scripts/py-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+bash-agent
+cargo-agent
+go-agent
+npm-agent
+py-agent
+terra-agent
+ succeeded in 53ms:
+
  succeeded in 53ms:
 ---
 name: py-agent
@@ -1403,766 +1077,719 @@ allowed-tools:
 # Py Agent
 
 Run the `py-agent.sh` script for lean, structured Python workflow output designed for coding agents.
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && rg -n "go-agent|gofmt|go vet|staticcheck|go test"' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-docs/testing.md:12:tests/run-scenarios.sh cargo-agent
-docs/testing.md:54:| **cargo-agent (baseline)** | Rust toolchain only, `USE_NEXTEST=0` |
-docs/testing.md:55:| **cargo-agent (with-nextest)** | Adds `cargo-nextest`, `USE_NEXTEST=auto` |
-tasks/prd-x-agent-backlog.md:5:The x-agent project provides lean workflow runner scripts for coding agents. Three agents exist (cargo-agent, npm-agent, terra-agent) but contain significant duplicated boilerplate. This PRD covers extracting shared helpers into a common library, refactoring existing agents, and shipping 8 new agents. Each agent is a separate deliverable with its own PR targeting main.
-tasks/prd-x-agent-backlog.md:32:- [ ] cargo-agent, npm-agent, terra-agent refactored to `source` the shared lib
-tasks/prd-x-agent-backlog.md:65:### US-003: go-agent
-tasks/prd-x-agent-backlog.md:66:**Description:** As a developer, I want a go-agent that checks formatting, runs vet/lint, and executes tests so I can validate Go code before CI.
-tasks/prd-x-agent-backlog.md:69:- `fmt` — `gofmt -l` to check, `gofmt -w` to fix (required)
-tasks/prd-x-agent-backlog.md:70:- `vet` — `go vet ./...` (required)
-tasks/prd-x-agent-backlog.md:71:- `staticcheck` — `staticcheck ./...` (optional, skip with notice if not installed)
-tasks/prd-x-agent-backlog.md:72:- `test` — `go test ./...` (required)
-tasks/prd-x-agent-backlog.md:75:**Optional tools:** staticcheck
-tasks/prd-x-agent-backlog.md:76:**Fix mode:** `gofmt -w` when `FMT_MODE=fix`
-tasks/prd-x-agent-backlog.md:82:- [ ] `fmt` step uses `gofmt -l` in check mode, `gofmt -w` in fix mode; CI forces check mode
-tasks/prd-x-agent-backlog.md:83:- [ ] `vet` step runs `go vet ./...`, reports diagnostics on failure
-tasks/prd-x-agent-backlog.md:84:- [ ] `staticcheck` step skips with notice if not installed, runs if available
-tasks/prd-x-agent-backlog.md:85:- [ ] `test` step runs `go test ./...`, extracts failing test names in `Fix:` hint
-tasks/prd-x-agent-backlog.md:86:- [ ] Commands: `fmt`, `vet`, `staticcheck`, `test`, `all` (default)
-README.md:19:| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
-README.md:48:path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tasks/prd-x-agent-backlog.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# PRD: x-agent Backlog — Shared Library + 8 New Agents
+ succeeded in 53ms:
+#!/usr/bin/env bash
+set -euo pipefail
 
-## Introduction
+# py-agent: lean Python workflow output for coding agents
+# deps: bash, mktemp
+# optional: ruff, black, mypy, pyright, pytest
 
-The x-agent project provides lean workflow runner scripts for coding agents. Three agents exist (cargo-agent, npm-agent, terra-agent) but contain significant duplicated boilerplate. This PRD covers extracting shared helpers into a common library, refactoring existing agents, and shipping 8 new agents. Each agent is a separate deliverable with its own PR targeting main.
-
-## Goals
-
-- Extract ~100-150 lines of duplicated boilerplate into `lib/x-agent-common.sh`
-- Refactor existing agents (cargo, npm, terra) to source the shared library
-- Ship 8 new agents, each with full scenario tests, SKILL.md, and install.sh integration
-- Every agent supports fix/auto-format where the underlying tool provides it
-- Maintain Bash 3.2 compatibility and structured output contract across all agents
-
-## User Stories
-
-**Definition of Done (applies to all stories):**
-- All acceptance criteria met
-- `shellcheck --severity=warning` passes on all new/modified scripts
-- `tests/run-scenarios.sh` passes for all affected agents
-exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,220p' tests/README.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Scenario Tests
-
-This folder contains fixture projects used to smoke-test each x-agent.
-
-## Quick Start
-
-```bash
-tests/run-scenarios.sh --list
-tests/run-scenarios.sh
-```
-
-## Layout
-
-```text
-tests/
-  run-scenarios.sh
-  cargo-agent/
-    clean/
-    issues/
-  npm-agent/
+KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
+# In CI, show full output; locally, limit to 40 lines to keep things tidy.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
+RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
+RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
+RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
+RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
+FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
 codex
-I’ve completed discovery and am now writing `.ralph/exploration.md` with this phase’s consolidated findings before drafting the go-agent work plan. That keeps the implementation context fresh and avoids broad rediscovery.
+I’ve identified all relevant docs and existing implementations. I’ll do one quick sweep of sibling spec docs (especially simpler single-step agent specs) so the plan stays aligned with expected fixture and acceptance format before drafting.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && sed -n '1,260p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# x-agent Exploration Notes
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/08-docker-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/06-helm-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/07-kube-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/09-ansible-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/10-sql-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/specs/03-bash-agent.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Spec 08: docker-agent
 
-## Key Files & Roles
+## Objective
 
-- `lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
-- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
-- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
-- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
-- `skills/bash-agent/scripts/bash-agent.sh`: Bash/Shell agent sourcing `lib/x-agent-common.sh`; runs `bash -n` syntax checking and `shellcheck` linting with severity control. Uses `print_result` from shared lib for step output.
-- `skills/bash-agent/SKILL.md`: trigger metadata and allowed tool declarations for shell script checks, including `SHELLCHECK_SEVERITY` knob.
-- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment. Excludes `tests/*/issues/*` from project-wide shellcheck scan since issue fixtures are intentionally bad.
-- `tests/bash-agent/`: clean/issues fixture set; clean has `scripts/good.sh` (valid script), issues has `scripts/bad.sh` (SC2034/SC2154 shellcheck warnings).
-- `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
-- `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
-- `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
-- `docs/agents/add-x-agent.md`: canonical structure guide for script boilerplate, helpers, output contract, and agent metadata.
-- `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
-- `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
-- `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
-- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-file update
-M /Users/chrisraethke/projects/x-agent/.ralph/exploration.md
-@@ -20,2 +20,6 @@
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
-@@ -33,2 +37,3 @@
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
-@@ -46,3 +51,4 @@
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
-apply_patch(auto_approved=true) exited 0 in 26ms:
-Success. Updated the following files:
-M /Users/chrisraethke/projects/x-agent/.ralph/exploration.md
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
+Create a new docker-agent that lints Dockerfiles with `hadolint` and optionally runs BuildKit `--check` mode.
 
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
+## Source
 
+- **PRD User Story:** US-007
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a docker-agent that lints Dockerfiles and optionally runs BuildKit checks so I can catch issues before CI builds.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_BUILD_CHECK)
+ succeeded in 52ms:
+# Spec 03: bash-agent
+
+## Objective
+
+Create a new bash-agent that validates shell scripts with `bash -n` (syntax checking) and `shellcheck` (linting).
+
+## Source
+
+- **PRD User Story:** US-002
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a bash-agent that validates shell scripts for syntax errors and lint issues so I can catch problems before CI.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs (KEEP_DIR, MAX_LINES, FAIL_FAST, TMPDIR_ROOT, CHANGED_FILES)
+- FR-3: Per-step toggles (RUN_SYNTAX, RUN_LINT)
+ succeeded in 53ms:
+# Spec 09: ansible-agent
+
+## Objective
+
+Create a new ansible-agent that lints Ansible playbooks/roles and validates syntax.
+
+## Source
+
+- **PRD User Story:** US-008
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want an ansible-agent that lints and syntax-checks Ansible playbooks/roles so I can catch issues before running them.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_SYNTAX)
+ succeeded in 52ms:
+# Spec 10: sql-agent
+
+## Objective
+
+Create a new sql-agent that lints SQL files with `sqlfluff` and optionally auto-fixes them.
+
+## Source
+
+- **PRD User Story:** US-009
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want an sql-agent that lints and optionally auto-fixes SQL files so I can maintain consistent SQL style.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_FIX)
+ succeeded in 53ms:
+# Spec 06: helm-agent
+
+## Objective
+
+Create a new helm-agent that lints Helm charts and validates template rendering.
+
+## Source
+
+- **PRD User Story:** US-005
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a helm-agent that lints Helm charts and validates template rendering so I can catch chart errors before CI.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_TEMPLATE)
+ succeeded in 53ms:
+# Spec 07: kube-agent
+
+## Objective
+
+Create a new kube-agent that validates Kubernetes manifests using `kubeconform` (preferred) or `kubeval`.
+
+## Source
+
+- **PRD User Story:** US-006
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a kube-agent that validates Kubernetes manifests so I can catch schema errors before applying to a cluster.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_VALIDATE)
+codex
+I’ve now captured the full spec set and adjacent implementations. I’m pulling Spec 01/02 to align this plan with previously established shared-library and refactor constraints before producing the final checklist and risk tradeoffs.
 exec
-/bin/zsh -lc "cd /Users/chrisraethke/projects/x-agent && cat > .ralph/work-plan.txt <<'EOF'
+/bin/zsh -lc "sed -n '1,360p' .ralph/README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/02-refactor-existing-agents.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/01-shared-library-extract.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,300p' .ralph/history/iteration-12-work-plan.txt" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Automation Opportunities for x-agent
+
+## [2026-03-08T16:59:00Z] output-parity-diff
+
+**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
+
+**Priority**: HIGH
+
+**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in `Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
+
+**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
+
+**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
+
+**Status**: PENDING
+
+## [2026-03-08T17:08:28Z] review-work-plan-checklist
+
+**Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
+
+ succeeded in 53ms:
+# RALPH Loop - Project Guide
+
+**Welcome to your RALPH (Recursive Autonomous Loop with Planning & Human-oversight) development environment!**
+
+This project uses an autonomous AI development loop that breaks down requirements into discrete specifications and implements them iteratively with automated planning, implementation, and review cycles.
+
+## Overview
+
+RALPH loop is a three-phase iterative development cycle:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  PLAN Phase (Codex)                                 │
+│  • Analyze spec                                     │
+│  • Create detailed work plan                        │
+│  • Identify risks and dependencies                  │
+└─────────────────┬───────────────────────────────────┘
+                  ▼
+┌─────────────────────────────────────────────────────┐
+│  WORK Phase (Claude Code)                           │
+ succeeded in 51ms:
 ## Implementation Checklist
-- [ ] 1. Confirm go-agent scope and current runner contract by reviewing "'`.ralph/task.md`, `.ralph/specs/04-go-agent.md`, `docs/agents/add-x-agent.md`, and existing shared-lib patterns.
-- [ ] 2. Create `skills/go-agent/scripts/go-agent.sh` with shared-lib sourcing (`lib/x-agent-common.sh`) and domain-step execution only.
-- [ ] 3. Implement universal and go-specific knobs in `go-agent.sh` with safe defaults and CI-aware `FMT_MODE` behavior (`auto` => CI check, local fix).
-- [ ] 4. Implement `run_fmt` using `gofmt -l` in check mode and `gofmt -w` in fix mode, including structured result/fix hints and CHANGED_FILES scoped targets.
-- [ ] 5. Implement `run_vet` with `go vet` and `staticcheck` detection wrapper, keeping `staticcheck` optional with required skip message and scoped/unscope package execution.
-- [ ] 6. Implement `run_test` using `go test` with failing test extraction from `--- FAIL:` lines and rich `Fix:` hint.
-- [ ] 7. Implement robust CHANGED_FILES-to-package mapping for Go fixtures and package args for `go vet`, `staticcheck`, and `go test`.
-- [ ] 8. Add command dispatch (`fmt`, `vet`, `staticcheck`, `test`, `all`, plus `--fail-fast`, `help`/`-h` before need()) and final `Overall` flow with `overall_ok` accumulation.
-- [ ] 9. Create `skills/go-agent/SKILL.md` with trigger text and allowed-tools including `FMT_MODE=*` and CHANGED_FILES.
-- [ ] 10. Add `tests/go-agent/clean/scenario.env` and `tests/go-agent/issues/scenario.env` with required fixtures (`go.mod`, `main.go`) and `REQUIRED_TOOLS="go"`.
-- [ ] 11. Update `install.sh` to include `go-agent` in skill selection, dependency checks, and AGENTS/CLAUDE snippet.
-- [ ] 12. Update `README.md` to list go-agent in Available Agents and add usage examples.
-- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [x] 1. Confirm go-agent scope and current runner contract by reviewing `.ralph/task.md`, `.ralph/specs/04-go-agent.md`, `docs/agents/add-x-agent.md`, and existing shared-lib patterns.
+- [x] 2. Create `skills/go-agent/scripts/go-agent.sh` with shared-lib sourcing (`lib/x-agent-common.sh`) and domain-step execution only.
+- [x] 3. Implement universal and go-specific knobs in `go-agent.sh` with safe defaults and CI-aware `FMT_MODE` behavior (`auto` => CI check, local fix).
+- [x] 4. Implement `run_fmt` using `gofmt -l` in check mode and `gofmt -w` in fix mode, including structured result/fix hints and CHANGED_FILES scoped targets.
+- [x] 5. Implement `run_vet` with `go vet` and `staticcheck` detection wrapper, keeping `staticcheck` optional with required skip message and scoped/unscope package execution.
+- [x] 6. Implement `run_test` using `go test` with failing test extraction from `--- FAIL:` lines and rich `Fix:` hint.
+- [x] 7. Implement robust CHANGED_FILES-to-package mapping for Go fixtures and package args for `go vet`, `staticcheck`, and `go test`.
+- [x] 8. Add command dispatch (`fmt`, `vet`, `staticcheck`, `test`, `all`, plus `--fail-fast`, `help`/`-h` before need()) and final `Overall` flow with `overall_ok` accumulation.
+- [x] 9. Create `skills/go-agent/SKILL.md` with trigger text and allowed-tools including `FMT_MODE=*` and CHANGED_FILES.
+- [x] 10. Add `tests/go-agent/clean/scenario.env` and `tests/go-agent/issues/scenario.env` with required fixtures (`go.mod`, `main.go`) and `REQUIRED_TOOLS="go"`.
+- [x] 11. Update `install.sh` to include `go-agent` in skill selection, dependency checks, and AGENTS/CLAUDE snippet.
+- [x] 12. Update `README.md` to list go-agent in Available Agents and add usage examples.
+- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 
 ### System Design and Boundaries
 
-The go-agent should follow the existing architecture layering:
+ succeeded in 53ms:
+# Spec 02: Refactor Existing Agents to Use Shared Library
 
-- `skills/go-agent/scripts/go-agent.sh`: domain-specific command runner only.
-- `lib/x-agent-common.sh`: shared runtime helpers (outdir lifecycle, locking, formatting utilities, fail-fast flow, tool check).
-- `tests/go-agent/*`: fixture contracts validated by `tests/run-scenarios.sh`.
-- `install.sh` + `README.md`: packaging and discoverability boundary.
+## Objective
 
-Primary coupling points:
+Refactor cargo-agent, npm-agent, and terra-agent to source `lib/x-agent-common.sh` instead of duplicating boilerplate. Output must be identical before and after.
 
-- Script-to-lib path coupling via `SCRIPT_DIR/../../../lib`.
-- External tool contracts to `go`, `gofmt`, `go vet`, and optionally `staticcheck`.
-- Fixture contract coupling to `tests/run-scenarios.sh` (`scenario.env` fields and `EXPECT_EXIT`).
+## Source
 
-### Dependency Graph and Coupling Risks
+- **PRD User Story:** US-001 (completion — refactor portion)
+- **Functional Requirements:** FR-1
 
-- Mandatory runtime path: command script → source helper lib → invoke domain steps.
-- High-coupling risk: all helpers are assumed to exist in `x-agent-common.sh`; any API change there affects all agents.
-- Command coupling risk: `run_scenarios` can execute `go-agent` by path from `AGENT_SCRIPT`; install path integrity must hold.
-- Data coupling risk: lockfile filename string in `setup_lock` is based on agent name, so using a wrong name breaks lock isolation.
+## User Story Context
 
-### Data Flow and Bottlenecks
+> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
 
-Flow:
+This spec completes US-001 by refactoring the three existing agents to use the shared lib created in spec 01.
 
-1. Parse args, handle help/fail-fast.
-2. Validate required tool (`go`), initialize outdir + lock.
-3. Resolve `CHANGED_FILES` → package scope list.
-4. Run selected steps in `all` with `should_continue`.
-5. Write complete step logs to `$OUTDIR`, print truncated output and status.
-6. Return PASS/FAIL summary.
+## Functional Requirements
 
-Potential bottlenecks:
+- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
+ succeeded in 52ms:
+# Spec 01: Extract Shared Library
 
-- `go vet`/`go test`/`go list` are the dominant costs; all else is O(n) path preprocessing.
-- Staticcheck path is optional, so if installed it adds another full traversal.
+## Objective
 
-### Security Architecture
+Create `lib/x-agent-common.sh` containing all boilerplate functions duplicated across existing agents. This is a new additive file — no existing agents are modified in this spec.
 
-- No new service/auth boundaries; only local filesystem and shell tool invocation.
-- Inputs are env+args; command construction should avoid indirect eval-like behavior.
-- Existing shell risk pattern (trusted project-local files and variables) remains; maintain existing conventions.
-- Lock files are advisory; avoid predictable collisions outside agent namespace.
+## Source
 
-### Architectural Options and Tradeoffs
+- **PRD User Story:** US-001 (partial — extraction only, refactor in spec 02)
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10
 
-1) CHANGED_FILES package scoping strategy
-- Option A: Direct directory derivation (`dirname` on changed `.go` files).
-  - Effort: low, deterministic.
-  - Risk: may include non-package directories; tool calls may produce extra work.
-  - Impact: simple and fast.
-- Option B: Resolve each changed directory with `go list` validation.
-  - Effort: medium.
-  - Risk: introduces extra command invocations.
-  - Impact: more precise package targeting.
-- Option C: Ignore CHANGED_FILES and always run on `./...`.
-  - Effort: lowest.
-  - Risk: slow and noisy; violates FR-3 requirement.
+## User Story Context
 
-Recommendation: Option A with minimal `go list`-style fallback where needed. Keeps runtime low and satisfies FR scope behavior.
+> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
 
-2) Fail hint construction
-- Option A: Generic hints only.
+This spec covers only the creation of the shared library. The refactoring of existing agents to use it is in spec 02.
+
+## Functional Requirements
+
+- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
+codex
+I’m now moving from discovery to artifact updates. I’ll add `gha-agent` to `.ralph/exploration.md` as a planning anchor, then create the full `work-plan.txt` with required sections, tradeoffs, and acceptance-driven step plan.
+exec
+/bin/zsh -lc "if [ -d tests/gha-agent ]; then echo 'HAS_GHA_DIR=1'; else echo 'HAS_GHA_DIR=0'; fi && if [ -f skills/gha-agent/scripts/gha-agent.sh ]; then echo 'HAS_SCRIPT=1'; else echo 'HAS_SCRIPT=0'; fi && if [ -f skills/gha-agent/SKILL.md ]; then echo 'HAS_SKILL=1'; else echo 'HAS_SKILL=0'; fi && if rg --files | rg 'gha-agent|actionlint|github/workflows/ci\\.yml' >/dev/null; then echo 'KEY_FILES_PRESENT=1'; else echo 'KEY_FILES_PRESENT=0'; fi" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+HAS_GHA_DIR=0
+HAS_SCRIPT=0
+HAS_SKILL=0
+KEY_FILES_PRESENT=0
+exec
+/bin/zsh -lc "cat > .ralph/exploration.md <<'EOF'
+# x-agent Exploration Notes
+
+## Key Files & Roles
+
+- "'`lib/x-agent-common.sh`: shared runtime library for agent scripts. Provides environment defaults, output helpers, cleanup/trap setup, lock handling, and shared result formatting utilities.
+- `skills/cargo-agent/scripts/cargo-agent.sh`: refactored agent using the shared library; pattern for complex scoped execution and structured output.
+- `skills/go-agent/scripts/go-agent.sh`: refactored single-step and multi-step domain runner with CHANGED_FILES mapping and CI-aware format behavior.
+- `skills/npm-agent/scripts/npm-agent.sh`: refactored agent that demonstrates formatter/linter fallbacks and scoped execution over changed files.
+- `skills/terra-agent/scripts/terra-agent.sh`: refactored agent with optional tooling (tflint), non-mutating checks, and lock-aware sequencing.
+- `tests/run-scenarios.sh`: central test orchestrator for shellcheck plus fixture execution.
+- `tests/<agent>/clean/` and `tests/<agent>/issues/`: per-agent scenario fixtures; each includes `scenario.env` with `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+- `install.sh`: installer entrypoint; currently installs `bash-agent`, `cargo-agent`, `go-agent`, `npm-agent`, `py-agent`, and `terra-agent`, and patches shared library for local/remote install modes.
+- `README.md`: human-facing agent catalog, usage examples, and quick-start guidance.
+- `.github/workflows/ci.yml`: CI currently runs scenario slices for bash, cargo, go, npm, py, and terraform agents.
+- `.ralph/specs/05-gha-agent.md`: current specification for the new gha-agent implementation.
+- `docs/agents/add-x-agent.md`: reference for required files, trigger patterns, and required helpers for each new agent.
+- `docs/agents/definition-of-done.md`: final acceptance checks for any new agent.
+- `.ralph/task.md`: task-level scope and spec sequence for eight remaining agents.
+- `.ralph/automation-opportunities.md`: pending candidates for automatable process improvements.
+- `.ralph/lessons.jsonl`: historical manual lessons and decision points.
+
+## Patterns & Conventions
+
+- Bash scripts use Bash 3.2-compatible syntax and start with `#!/usr/bin/env bash` plus `set -euo pipefail`.
+- Agents print canonical Step/Result/Time output and end with `Overall` and `Logs`.
+- Every `Result: FAIL` includes a `Fix:` line; failures preserve full logs and print truncated context locally.
+- Universal knobs are expected in all agents: `RUN_<STEP>`, `FAIL_FAST`, `MAX_LINES`, `KEEP_DIR`, `TMPDIR_ROOT`, and `CHANGED_FILES`.
+- CI behavior for scripts is controlled by `CI=true|1`; line truncation is disabled and check-only mode is preferred for mutating steps.
+- Scripts should parse help flags before running `need()` checks so `--help` works without project context.
+- `--fail-fast` is supported in `all` mode via shared `should_continue()` guard.
+- Workflow-level locking is centralized in shared helpers using `flock` with Perl fallback.
+- Missing optional tooling is expected to produce `SKIP` with explicit reason; required tooling exits 2 through `need()`.
+- `tests/run-scenarios.sh` skips scenarios whose `REQUIRED_TOOLS` are unavailable.
+
+## Database Schema
+
+No database is used.
+
+## Test Infrastructure
+
+- Scenario discovery happens via `find tests -name scenario.env`, including `clean` and `issues` fixture pairs per agent.
+- `tests/run-scenarios.sh` can run all tests, a named fragment filter, `--list`, and shellcheck-only mode.
+- Shellcheck is run with `--severity=warning` and is required to pass for all `*.sh` files under `skills`, `tests`, `lib`, and root installer scripts.
+- Fixture assertions are exit-based using `EXPECT_EXIT`; mismatches show log slices from the failing fixture.
+- Scenario fixtures declare `REQUIRED_TOOLS` and are skipped automatically when missing.
+
+## Architecture & Data Flow
+
+- Invocation enters through a script under `skills/<agent>/scripts`.
+- Shared library is sourced early after env defaults and before agent-specific logic.
+- On command execution: parse CLI/help/flags, validate required tools, initialize output directory and lock, resolve scope from `CHANGED_FILES`, execute selected steps, and write each step log under `$OUTDIR`.
+- Steps run external tooling with scoped targets when available, write logs to `$OUTDIR/<step>.log`, and print status summaries.
+- Final status is aggregated into `overall_ok` and rendered via `print_overall`.
+- `install.sh` and `README.md` are the registration/discovery boundary for new agents.
+- For gha-agent, the data path is `.github/workflows/*.yml|*.yaml` from the project root; no existing gha-agent implementation is currently present in repo.
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+codex
+I’m ready to write the plan file now with the required checklist-first format, the architecture/code/test/performance sections, decision log, and step-by-step execution plan tied directly to each acceptance criterion.
+exec
+/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt <<'EOF'
+## Implementation Checklist
+- [ ] 1. Confirm all spec and repository constraints for Spec 05-gha-agent against "'`.ralph/specs/05-gha-agent.md`, `.ralph/task.md`, and shared agent patterns.
+- [ ] 2. Create `skills/gha-agent/scripts/gha-agent.sh` with `#!/usr/bin/env bash`, `set -euo pipefail`, shared-lib source, and FR-1 universal contract.
+- [ ] 3. Implement `RUN_LINT` and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`/`CHANGED_FILES` integration through shared helpers.
+- [ ] 4. Implement `usage()` and CLI contract: no-arg default `all`, explicit `lint`, `help`/`-h`/`--help`, `--fail-fast`, and unknown-command handling.
+- [ ] 5. Implement required-tool validation with `need actionlint` and `--help` behavior that does not require project context or tool availability.
+- [ ] 6. Implement `run_lint` with `.github/workflows` discovery, CHANGED_FILES scoping, skip-paths, actionlint execution, log capture, and mandated fix hint.
+- [ ] 7. Add explicit `all` orchestration using `should_continue` and step toggles.
+- [ ] 8. Add `skills/gha-agent/SKILL.md` with trigger keywords and minimal allowed-tool patterns for `RUN_*`, `CHANGED_FILES`, and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`.
+- [ ] 9. Add `tests/gha-agent/clean/` fixtures (`scenario.env`, `.github/workflows/ci.yml`) with `REQUIRED_TOOLS="actionlint"` and `RUN_ARGS="all"`.
+- [ ] 10. Add `tests/gha-agent/issues/` fixtures (`scenario.env`, `.github/workflows/bad.yml`) with an actionlint-detectable failure and `REQUIRED_TOOLS="actionlint"`.
+- [ ] 11. Extend `install.sh` to include `gha-agent` in `SKILLS`, dependency check section, and AGENTS/CLAUDE snippet.
+- [ ] 12. Extend `README.md` with `gha-agent` in Available Agents and usage examples.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+
+## Architecture Review
+
+### Overall system design and component boundaries
+`gha-agent` is a single-step domain wrapper around the existing shared runtime and orchestration conventions. The architecture is unchanged relative to existing agents.
+
+- Script layer: `skills/gha-agent/scripts/gha-agent.sh` handles argument parsing, discovery, scoped command execution, and result rendering.
+- Shared runtime: `lib/x-agent-common.sh` supplies common setup, locking, output formatting helpers, fail-fast semantics, and dependency checks.
+- Registration layer: `skills/gha-agent/SKILL.md`, `install.sh`, and `README.md` register the agent and document usage.
+- Validation layer: `tests/gha-agent/*` and `tests/run-scenarios.sh` validate fixture behavior and shell compliance.
+
+Dependency flow is linear: plan/scope/validate -> discovery -> command execution -> output/logging -> aggregated overall result.
+
+### Dependency graph and coupling concerns
+`gha-agent` depends on:
+- local path conventions via `SCRIPT_DIR/../../../lib`
+- `actionlint` binary availability in PATH
+- test fixtures under `.github/workflows`
+
+`tests/run-scenarios.sh` depends on exact script path and executable bit. `install.sh` depends on the same paths for distribution and discovery.
+
+Coupling risks:
+- Path coupling: wrong `LIB_DIR` resolution breaks all shared helpers.
+- Install coupling: missing `gha-agent` in `SKILLS` makes agent undiscoverable.
+- Tool coupling: absence of `actionlint` should gracefully skip via fixture tool requirements, not script crash.
+
+### Data flow patterns and potential bottlenecks
+Data flow per invocation:
+1. Parse flags/command and help path.
+2. `need actionlint` then shared `setup_outdir` + `setup_lock`.
+3. Resolve workspace scope from `CHANGED_FILES` or `.github/workflows` discovery.
+4. Run actionlint command.
+5. Write full output to `$OUTDIR/lint.log` and emit trimmed diagnostics.
+6. Print final overall pass/fail and return exit code.
+
+Bottlenecks are minimal and limited to filesystem walks for workflow file discovery and `actionlint` execution over YAML files.
+
+### Scaling characteristics and single points of failure
+- Scales linearly with number of workflow files and size of workflow YAML.
+- Single-point-of-failure remains the lockfile and temp log lifecycle per agent name; if lock cannot be acquired because of stale FD or FS issue, runs serialize or proceed (depending on system behavior).
+- In lockless environments, overlapping runs can contend for shared `.github/workflows` read operations but these are read-only; output interleaving risk is avoided by per-run log dir.
+
+### Security architecture
+- No external network/API interactions are introduced.
+- Inputs are local paths/environment variables and should be treated as trusted because agents are run inside a local repo.
+- Defensive controls:
+  - command execution only through fixed executable `actionlint` with validated path arguments.
+  - quoting of discovered file paths in argument arrays to reduce glob/word-splitting effects.
+  - shared lock prevents concurrent overlapping runs from clobbering workspace assumptions.
+
+### Key architectural options and tradeoffs
+Decision A: CHANGED_FILES behavior
+- Option 1: Ignore `CHANGED_FILES`; always run `actionlint` on all workflow files.
+  - Effort: lowest, simplest.
+  - Risk: slower and violates FR-3/scoped behavior.
+  - Future impact: weakens incremental behavior as specs scale.
+- Option 2: Filter CHANGED_FILES to workflow paths and pass scoped list; fall back to all when empty.
   - Effort: low.
-  - Risk: misses required `TestFoo` extraction detail.
-- Option B: Parse `go test` output for named fails and join names in hint.
-  - Effort: moderate string parsing.
-  - Risk: brittle output variations; manageable with grep/sed patterns.
-  - Impact: higher value diagnostics.
+  - Risk: scoped file expansion edge cases with spaces/unusual filenames.
+  - Future impact: matches broader repo style and gives strong incremental behavior.
+- Option 3: Implement a generic scope abstraction for all agents in shared lib.
+  - Effort: high.
+  - Risk: migration ripple to non-GitHub agents.
+  - Future impact: possible reuse but out-of-scope for single spec.
 
-Recommendation: Option B (required by FR-12). Keep fallback generic if parsing fails.
+Chosen: Option 2. It satisfies FR-3 and keeps future scalability while avoiding cross-spec churn.
 
-3) CI format behavior
-- Option A: Respect only user `FMT_MODE`.
-  - Risk: conflicts with FR-10.
-- Option B: `if CI` force check regardless of env.
-  - Effort: minimal.
-  - Impact: deterministic behavior and CI parity.
+Decision B: Scope discovery strategy
+- Option 1: `find .github/workflows -type f` and filter extensions.
+  - Effort: low.
+  - Risk: extra scan if repo has many nested workflow-like paths.
+  - Impact: predictable and easy to test.
+- Option 2: Use `git ls-files ".github/workflows"` only.
+  - Effort: low.
+  - Risk: misses untracked workflow additions.
+  - Impact: weak for dirty working directories.
 
-Recommendation: Option B.
+Chosen: Option 1 (filesystem-first) for correctness in all working-tree states.
 
-### Implications for Future Specs
+Decision C: Skip semantics when no workflows exist
+- Option 1: Return FAIL with explicit instruction.
+  - Impact: alerts caller but may be noisy in repos without workflows.
+- Option 2: Return SKIP with explicit reason.
+  - Impact: aligns FR-4 and consistent with other agents.
 
-- This agent cements go-scoping helper expectations before US-05..10 start.
-- If CHANGED_FILES resolution grows complex (e.g., vendor/module roots), consider adding a reusable helper in shared lib in a later spec.
-- Ensure future agents that map changed files to target packages use similar scoped arg strategy for consistency.
+Chosen: Option 2.
+
+Implications for future specs: keep this same skip-first pattern in new single-scope agents (helm/docker/kube/etc.) when discovery paths are optional.
 
 ## Code Quality Planning
 
-### Module Structure and Organization
+### Code organization and module structure
+Keep `gha-agent` domain file under ~200 lines by relying on shared helpers for:
+- cleanup and locking
+- step timing
+- result formatting
+- lock acquisition
 
-- Keep `go-agent.sh` under ~200 lines of domain logic by using shared lib helpers.
-- Separate concerns by function:
-  - env/usage
-  - scope resolution
-  - one `run_<step>` per command
-  - `main()` dispatcher
+`gha-agent.sh` should therefore contain only:
+- header + shared-lib source
+- usage/help text
+- scope resolver
+- one command function (`run_lint`)
+- command dispatcher (`main`)
 
-### DRY and Duplication
+### DRY opportunities and repetition plan
+Use shared `print_result`, `setup_outdir`, `setup_lock`, `step`, and `fmt_elapsed`; avoid duplicating trap/lock code. The only domain-specific duplication may be argument normalization for actionlint command modes.
 
-- Reuse common output helpers (`step`, `fmt_elapsed`, `print_overall`, `print_result`, `setup_*`, `need`, `should_continue`).
-- Avoid duplicating lock/setup/cleanup blocks.
-- Build a single scoped target helper used by `fmt`, `vet`, `staticcheck`, and `test`.
-- Shared log names by step: `<step>.log`.
+### Error handling patterns for explicit edge cases
+All edge cases must map to deterministic output and exit semantics:
+- missing required argument context for help should not fail on `need()`
+- missing `actionlint` should fail with code 2 via `need`
+- no `.github/workflows` directory should produce `Result: SKIP (no .github/workflows/ directory found)`
+- CHANGED_FILES set but no matching workflow paths should produce `Result: SKIP` (clear reason)
+- actionlint failures should produce `Result: FAIL` and `Fix:` hint
+- successful run should clean temp logs unless `KEEP_DIR=1`
+- keep `overall_ok` and `--fail-fast` behavior consistent in command path
 
-### Explicit Error Handling (all edge cases)
+### Technical debt prevention
+- Keep path filtering logic centralized in one helper function and reused by `run_lint`.
+- Keep fix hint text standardized and deterministic.
+- Keep failure output length bounded by `MAX_LINES`.
+- Do not add per-agent custom trap logic that bypasses shared lib.
+- Keep CHANGED_FILES parsing consistent with existing agents (space-delimited list assumption) to avoid creating new divergence.
 
-- Missing required `go`: fail fast via `need go` with exit `2`.
-- Missing optional `staticcheck`: report `SKIP` and continue.
-- Missing `.go` files and/or no valid scoped dirs:
-  - `fmt`: fallback to `.` in local/full mode.
-  - vet/test/staticcheck: fallback to `./...` for safety.
-- Command failures:
-  - emit `Result: FAIL` and `Fix:` line with actionable command.
-  - preserve full output under `$OUTDIR`.
-- Empty fixtures/parse failures:
-  - treat as non-fatal unless command output indicates actionable error.
-- `help` invocation should bypass project/tool validation.
-
-### Technical Debt Prevention
-
-- Keep argument forwarding minimal and explicit to avoid shell injection and accidental argument loss.
-- Preserve output contract (`Step`, `Result`, optional `Fix`, `Time`, `Overall`, `Logs`) and exit semantics.
-- Use stable helper calls instead of hand-rolled traps/lock logic.
-- Keep CHANGED_FILES parsing intentionally simple and documented to match existing repo conventions unless future spec explicitly lifts the space-in-filename limitation.
-
-### Engineering Level
-
-- Implement the smallest robust solution that meets FRs, avoid over-generalizing scoping beyond required `.go` behavior.
-- Prefer readable Bash 3.2-compatible logic over compact but opaque string pipelines.
+### Engineering level
+Use `engineered enough` behavior:
+- no over-abstracted generic YAML parser
+- explicit checks for expected files
+- straightforward bash arrays for scoped files
+- avoid brittle command substitutions with unguarded glob expansion.
 
 ## Test Strategy
 
-### Unit/Function-level
+### Coverage model
+- Unit/isolated behavior is command-level in shell execution terms (scope resolution and conditional branch behavior).
+- Integration behavior is `tests/run-scenarios.sh gha-agent` with clean and issues fixtures.
+- End-to-end validation includes running full repository checks through `ralph validate work`.
 
-Because this repo is shell-driven, tests are primarily scenario-based, but internal behavior should still be validated by execution behavior:
+### Critical edge-case coverage
+- clean workflow: valid `ci.yml` passes with `EXPECT_EXIT=0`
+- issues workflow: invalid workflow fails with `EXPECT_EXIT=1`
+- missing workflow directory: runs should SKIP and return PASS
+- CHANGED_FILES scoped to non-workflow files: should SKIP if no workflow matches
+- CHANGED_FILES scoped to one workflow file: should only lint that file
+- all mode on skip case: default still follows output contract
+- `--fail-fast` with an explicit failing lint: no extra steps exist, but guard still exercised and should not regress
+- install/README presence checks via review against touched files.
 
-- Run help path with no tools/project context to assert pre-tool usage handling.
-- Simulate `CHANGED_FILES` with known `.go` file lists and verify scope output (when non-empty).
-- Ensure `FMT_MODE=check` and `FMT_MODE=fix` are honored and that CI mode forces check.
+### Failure modes and error paths
+- absent `actionlint` in environment
+- corrupted workflow YAML causing actionlint parser errors
+- scenario wrapper passing spaces in workflow filenames (documented limitation)
+- help invocation with nonexistent project root/toolchain
+- missing `.github/workflows` directory
 
-### Integration (Scenario Tests)
-
-- `tests/run-scenarios.sh go-agent` (must report no failures):
-  - clean expects PASS
-  - issues expects FAIL
-- `tests/run-scenarios.sh shellcheck` (indirectly covered by full run) after script creation.
-- `shellcheck --severity=warning skills/go-agent/scripts/go-agent.sh`.
-- Manual execution inside fixture dirs:
-  - `FMT_MODE=check` on clean and issue scenarios.
-  - `FMT_MODE=fix` on issue scenario to validate rewrite and non-failing return (where fixture is only formatting issue).
-  - `RUN_STATICCHECK=0` to verify command-level toggle behavior.
-
-### Failure Modes and Edge Cases in Tests
-
-- `go` missing in environment: scenario marked SKIP via REQUIRED_TOOLS in fixture.
-- `staticcheck` missing: step must return SKIP and `all` continues to remaining steps.
-- `CHANGED_FILES` with only non-`.go` entries: should degrade to unscoped package-level behavior.
-- `RUN_*` toggles set to `0` skip intended steps.
-- `--fail-fast=1` in all mode halts after first failure, and `overall_ok` is returned correctly.
-
-### Assertion Strength
-
-- Validate exit codes exactly (`EXPECT_EXIT`) through scenario harness.
-- Validate each step’s status string (`Result: PASS|FAIL|SKIP`) and presence of `Fix:` on failures.
-- Validate failure hints contain either actionable test names or explicit staticcheck skip wording.
-- Validate logs are emitted and cleanup semantics follow `KEEP_DIR` and exit code.
+### Assertion strength expectations
+- assert exact exit codes through `EXPECT_EXIT`
+- assert `Result:` lines include PASS/FAIL/SKIP states
+- assert `Fix:` exists on FAIL
+- assert logs are produced under `$OUTDIR` and `Overall` summary appears
+- assert skip-path messages are explicit and actionable.
 
 ## Performance Considerations
 
-### Query/Execution Patterns
+- No database usage.
+- Avoid repeated file-system scans by resolving scope once before running any checks.
+- `find .github/workflows` is O(n) in repository size; in monorepos this is bounded and one pass.
+- `actionlint` runtime is the dominant cost; CHANGED_FILES reduces this in incremental scenarios.
+- Logging to disk is O(output size) and safer than memory buffering.
+- No caching required for first implementation; cacheable future optimization: optionally store last-scan path list per run path if repeated invocations become hot.
 
-- Avoid running `go list ./...` multiple times in a single invocation when CHANGED_FILES is empty.
-- Reuse a single resolved scope list for vet/staticcheck/test; do not recompute per step.
-- Do not re-run `gofmt` on entire tree when scoped directories are known.
+## Step-by-Step Implementation Plan
 
-### Memory/CPU
+1. What: confirm implementation requirements and concrete integration points.
+Why: ensures implementation is aligned with the backlog, FR list, and existing conventions before edits.
+How: read spec, `docs/agents/*`, `lib/x-agent-common.sh`, `tests/run-scenarios.sh`, and install/readme patterns in a single pass.
+Edge cases: skip discovery of any missing existing assumptions (shared helpers, lock path, scenario contract).
+Tests: no code tests; this is planning verification.
+Risks: stale plan if a dependency from existing scripts is missed.
 
-- Keep process output on disk in per-step logs to avoid unbounded memory use.
-- Use lightweight text scans (`grep`/`sed`) only after commands fail.
-- Avoid storing huge package lists in command expansions where unnecessary.
+2. What: create `skills/gha-agent/scripts/` and `skills/gha-agent/SKILL.md` directories and scaffolding.
+Why: filesystem path parity with existing agents is required for installer and discovery.
+How: mkdir new directories and align file naming exactly with `<name>-agent` conventions.
+Edge cases: ensure executable bit for script path in script and installer contexts.
+Tests: `bash -n` not yet required but script should eventually satisfy shell syntax checks.
+Risks: missing directories break install and scenario path resolution.
 
-### Caching Opportunities
+3. What: build the script header and shared-lib integration.
+Why: FR-1 mandates sourcing the shared library and keeps logic below 200 lines.
+How: add `set -euo pipefail`, comments with required/deps, compute `SCRIPT_DIR`/`LIB_DIR`, and source `x-agent-common.sh`.
+Edge cases: keep source path `../../../lib` exactly; avoid side effects on source.
+Tests: run script help once after implementation to confirm no early side effects.
+Risks: wrong relative path to lib causes runtime failure.
 
-- Cache scoped directory list once (environment variable/array) and reuse across steps.
-- Reuse the same scope when command arguments are unchanged.
+4. What: define knobs and universal env defaults.
+Why: ensures universal knob support and per-step control.
+How: set `RUN_LINT=1` and rely on shared vars from common lib for all universal knobs.
+Edge cases: ensure no local override shadows shared defaults for `CHANGED_FILES` and line control.
+Tests: scenario run with `RUN_LINT=0` should skip step path if using `all`.
+Risks: incorrect toggle evaluation causing lint run when disabled.
 
-### Slow Paths
+5. What: implement help and argument parser.
+Why: FR-5 requires `--help`/`help`/`-h`, and usage should work regardless of project context.
+How: handle help and `--fail-fast` before `need actionlint`; dispatch commands `lint`, `all`, and default `all`.
+Edge cases: unknown command should print usage and exit 2.
+Tests: `./gha-agent.sh help`, `-h`, `--help` in empty directory.
+Risks: accidental `need` before help causing false failures.
 
-- `go test` and `go vet` are inherently expensive; scope reduction via CHANGED_FILES is the main optimization.
-- staticcheck adds additional CPU; skip when unavailable.
+6. What: implement workflow discovery and CHANGED_FILES scoping.
+Why: FR-7 requires scoped behavior and skip behavior when no target exists.
+How: resolver returns targets from changed files only when `CHANGED_FILES` is non-empty and matching `*.yml` or `*.yaml` under `.github/workflows/`; otherwise discover all workflow files from that directory.
+Edge cases: `CHANGED_FILES` includes non-workflow entries, duplicates, or missing files.
+Tests: run with scoped and non-scoped environment values in fixture and local checks.
+Risks: path spaces and shell splitting mismatch (repo-wide convention already uses space-delimited values).
+
+7. What: implement `run_lint` as the single step.
+Why: meets FR-6 and FR-4 by executing actionlint with structured reporting.
+How: print step, handle empty workflow targets (`SKIP`), execute `actionlint` with targets, capture stdout+stderr to `$OUTDIR/lint.log`, report failures with truncated context and `Fix: resolve the workflow errors above, then re-run: /gha-agent lint`.
+Edge cases: actionlint output includes both stdout/stderr; use redirection accordingly.
+Tests: issues fixture should fail and include actionable error context in output.
+Risks: forgetting non-zero return handling and marking pass incorrectly.
+
+8. What: implement `main` flow with all command semantics.
+Why: ensures FR-4 output contract, FR-5 fail-fast behavior, and stable exit codes.
+How: initialize `overall_ok=1`, setup outdir+lock after tool checks and parse, run `run_lint` when command is `lint`/`all` with `RUN_LINT`/`should_continue`, emit final result via `print_overall`.
+Edge cases: `--fail-fast=1` does not regress in single-step mode but still must be parsed and respected.
+Tests: fixture expectations for default all and explicit command.
+Risks: omitting `set -e` interactions around explicit return handling and final aggregate status.
+
+9. What: add SKILL.md registration docs.
+Why: required by FR-11 and for agent discoverability.
+How: mirror existing style with concise trigger language for actionlint workflows and allowed-tools for run command plus env overrides (`RUN_LINT`, `CHANGED_FILES`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `TMPDIR_ROOT`).
+Edge cases: include command forms (`lint`, `all`).
+Tests: manual inspection only; validate policy compatibility by review.
+Risks: omitted allowed-tools pattern breaks tool-call execution.
+
+10. What: add scenario fixtures.
+Why: required by FR-12 and FR-13.
+How: add `tests/gha-agent/clean/scenario.env` and issue fixture with minimal valid/invalid workflow files under `.github/workflows`.
+Edge cases: make issue file deterministic (invalid runs-on/type, expression syntax, etc.) and avoid ambiguous YAML warnings.
+Tests: run scenario label checks via `tests/run-scenarios.sh gha-agent`.
+Risks: too-brittle fixture depending on specific actionlint version/version-specific warnings.
+
+11. What: update distribution docs.
+Why: FR-13 requires installer and docs updates to make agent visible and installable.
+How: modify `install.sh` `SKILLS`, dependency hints, and AGENTS snippet for gha-agent; update README available-agent row and quick usage section.
+Edge cases: keep existing installation order and interactive prompts intact.
+Tests: validate installer help snippet includes gha-agent line and `run all` discoverability not harmed.
+Risks: accidental format regression in install dependency checks.
+
+12. What: run validation and complete sign-off.
+Why: confirm acceptance criteria and catch integration/regression issues before WORK phase.
+How: run `tests/run-scenarios.sh gha-agent`, shellcheck on new script+SKILL and relevant files via `tests/run-scenarios.sh shellcheck`, then `ralph validate work`.
+Edge cases: fixture/tool mismatch should be explicit skips vs fails.
+Tests: full plan-phase checks.
+Risks: validation toolchain dependency (shellcheck missing) causing false failure.
+
+13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Decision Log
 
-### Decision 1: Script source path strategy
-- Alternatives:
-  - A) Use `SCRIPT_DIR/../../../lib/x-agent-common.sh` (same as existing agents).
-  - B) Add lib path resolver utility in common layer.
-  - C) Use env override for lib path.
-- Chosen: A.
-- Why: explicit requirement alignment and lowest churn; predictable for this spec.
-- Implications: keep in sync with existing install/local path assumptions.
+- Decision 1: Use per-spec shared-lib source pattern instead of local utility duplication.
+  - Options considered: keep duplicated bootstrap code in new script, or source `lib/x-agent-common.sh`.
+  - Chosen: source shared lib.
+  - Why: consistent with backlog scope and line budget.
+  - Impact: lower maintenance, same patterns as existing agents, uniform fail-safe semantics.
 
-### Decision 2: Scope target derivation for changed files
-- Alternatives:
-  - A) Use file-directory projection only.
-  - B) Resolve each directory through `go list`.
-  - C) Ignore CHANGED_FILES.
-- Chosen: A with safe fallback to full run.
-- Why: meets FR while keeping runtime low and implementation compact.
-- Implications: behavior remains intuitive and fast; future helper extraction can refine precision.
+- Decision 2: Implement strict skip-first behavior for missing `.github/workflows`.
+  - Options considered: return FAIL, return SKIP, auto-create dir.
+  - Chosen: `SKIP` with explicit reason.
+  - Why: aligns FR-4 requirement text and avoids false failures in non-GHA repos.
+  - Impact: predictable behavior for repos with only Terraform/Python etc.
 
-### Decision 3: Test failure hint extraction
-- Alternatives:
-  - A) Generic failure message.
-  - B) Parse `--- FAIL:` and include test list.
-  - C) Parse package-wide summary lines.
-- Chosen: B.
-- Why: directly satisfies FR-12 and improves remediation speed.
-- Implications: depends on go test output format; add fallback generic hint if parse misses.
-
-### Decision 4: Install/README updates
-- Alternatives:
-  - A) Delay and only rely on hidden agent selection.
-  - B) Register in `install.sh` and docs immediately.
-- Chosen: B.
-- Why: aligns with project standards and user discoverability requirements.
-- Implications: no discoverability gap when agent is added.
+- Decision 3: Preserve local command semantics for `all` with one-step body.
+  - Options considered: special-case `all` with no step expansion vs route through `lint`.
+  - Chosen: route `all` through step dispatch to keep consistent `overall_ok` and fail-fast handling.
+  - Why: future-proofing for additional steps.
+  - Impact: minimal complexity and consistent UX across agents.
 
 ## Edge Cases and Risks
 
-- `CHANGED_FILES` containing spaces: consistent with current project convention, this splits on spaces and may mis-handle such paths.
-- `gofmt -l` returns non-zero only on parse errors; must use output emptiness as pass/fail in check mode.
-- Staticcheck skip path must not abort agent execution.
-- go test can return fail with output in stderr only; capture both streams consistently.
-- `--fail-fast` with `all` and scoped steps must preserve `overall_ok` and return code semantics.
-- `go test` failures can include package-level `FAIL` banners without any `--- FAIL:` lines; still provide generic fix hint.
-- `all` mode under `KEEP_DIR=0` must preserve logs only on failure.
-- `FMT_MODE=auto` plus explicit `FMT_MODE=fix/check` in environment should have deterministic priority.
-
-## Implementation Steps
-
-1. What: Add the new script skeleton and shared-lib integration.
-   Why: Aligns with architecture and keeps script length under target threshold.
-   How: copy style from `skills/py-agent`/`skills/terra-agent` with `set -euo pipefail`, doc header, source block, usage, dispatcher.
-   Edge cases: help path must run before `need go`; lock setup should happen only for real command runs.
-   Tests: `bash -n skills/go-agent/scripts/go-agent.sh`.
-   Risks: missing source order breaking `shellcheck` directives.
-
-2. What: Implement universal and agent knobs including `FMT_MODE` normalization.
-   Why: ensures local vs CI behavior and user control for each step.
-   How: define `RUN_FMT`, `RUN_VET`, `RUN_STATICCHECK`, `RUN_TESTS`, `FMT_MODE`, then normalize mode in run-time block:
-   - `FMT_MODE=auto`: local fix, CI check
-   - explicit `check|fix`: preserved unless CI then forced check.
-   Edge cases: invalid `FMT_MODE` values should fail with clear message and exit 2.
-   Tests: `go-agent fmt` with `FMT_MODE=check/fix/auto` and simulated `CI=true`.
-   Risks: accidental local mutation in CI due mode override bug.
-
-3. What: Implement CHANGED_FILES resolver for Go package directories.
-   Why: supports FR-3 and performance optimization.
-   How: filter `CHANGED_FILES` for existing `.go` files, derive unique directories, print scope summary, and reuse same list across scoped steps.
-   Edge cases: missing file paths, duplicate dirs, non-package directories.
-   Tests: fixture run with `CHANGED_FILES` set to one file and multiple files.
-   Risks: over-broad dirs including nested non-package parents.
-
-4. What: Implement `run_fmt` with scoped check/fix semantics.
-   Why: FR-7/FR-10 requirement, biggest local improvement path.
-   How: in check mode, run `gofmt -l` against targets, fail when output non-empty; in fix mode, run `gofmt -w`, pass on formatting success.
-   Edge cases: check mode output can include many lines; output summary plus truncated snippet.
-   Tests: clean fixture pass, issue fixture fail in check, fix succeed in fix mode.
-   Risks: false fail when command exits 0 despite unchanged files.
-
-5. What: Implement `run_vet` with stdout/stderr-aware logging and fail hint.
-   Why: FR for vet diagnostics and actionable fix path.
-   How: run `go vet` with scoped args/default `./...`, capture output to `$OUTDIR/vet.log`; print tail on failure and `Fix:` hint.
-   Edge cases: `go vet` writes to stderr; ensure both streams captured.
-   Tests: issue fixture vet failure with `go test` pass, and clean fixture pass.
-   Risks: noisy output in large projects without truncation control.
-
-6. What: Implement optional `run_staticcheck` with skip-first behavior.
-   Why: FR-6 requires optional dependency handling.
-   How: check `command -v staticcheck`; if missing print exact SKIP message; else run with scoped args and same result semantics as other steps.
-   Edge cases: staticcheck exists but fails for malformed modules.
-   Tests: run with `RUN_STATICCHECK=1` in clean fixture and issue fixture; validate skip string when absent.
-   Risks: accidentally returning failure for missing optional tool.
-
-7. What: Implement `run_test` with failing-test extraction and hint formatting.
-   Why: direct FR requirement to list failing tests for fix hint.
-   How: run `go test` to log file, parse lines matching `''^--- FAIL:` and extract test names; dedupe and join with `, `.
-   Edge cases: go test output formats can vary across subtest naming; fallback to generic hint.
-   Tests: create a failing test case if needed for deterministic extraction validation.
-   Risks: parser fragility in uncommon go versions.
-
-8. What: Implement command dispatch and all-mode orchestration.
-   Why: consistent user interface and expected control-flow.
-   How: support `fmt`, `vet`, `staticcheck`, `test`, `all`; parse `--fail-fast` and help options; guard each step with `RUN_*` and `should_continue`.
-   Edge cases: unknown command returns usage and exit code 2.
-   Tests: `go-agent`, `go-agent help`, `go-agent all`, invalid command.
-   Risks: argument parsing collisions when future subcommands expand.
-
-9. What: Add `skills/go-agent/SKILL.md` metadata and trigger coverage.
-   Why: necessary for agent invocation and allowed-tools discovery.
-   How: mirror style of existing agents; include `go agent`, `run go checks`, `golang checks`, etc.
-   Edge cases: missed `FMT_MODE=*` pattern blocks automation.
-   Tests: manual skill-readability validation.
-   Risks: inconsistent examples creating confusion for callers.
-
-10. What: Add fixtures for clean and issues scenarios and scenario env contracts.
-    Why: required harness coverage and behavior isolation.
-    How: create `tests/go-agent/clean` with `go.mod` + valid formatted `main.go`; create `tests/go-agent/issues` with `go.mod` + vet-triggering or formatting-bad `main.go`.
-    Edge cases: avoid adding dependencies beyond stdlib; keep fixture runtime fast.
-    Tests: `REQUIRED_TOOLS="go"` in both `scenario.env` files.
-    Risks: brittle fixture if go toolchain differences alter behavior.
-
-11. What: Update `install.sh` for discoverability and dependency checks.
-    Why: all new agents must be installable from supported toolchain path.
-    How: add `go-agent` to `SKILLS`, optional dependency check section, and AGENTS snippet output.
-    Edge cases: remote/local install behavior for script path patching.
-    Tests: `sh install.sh --help` and selected install flow with `go-agent`.
-    Risks: patch mismatch causing missing lib path for go-agent install.
-
-12. What: Update `README.md` documentation.
-    Why: maintain docs/usage parity and quick-start discoverability.
-    How: add row in Available Agents, `go-agent` usage examples and command samples.
-    Edge cases: keep language consistent with existing style.
-    Tests: visual/manual doc consistency check.
-    Risks: documentation drift from actual output contract.
-
-13. What: Update `.ralph/exploration.md` only if implementation changes documented boundaries/files/patterns.
-    Why: avoids repeated rediscovery for future specs.
-    How: keep entries concise and version-stable.
-    Edge cases: avoid stale references to planned/not-yet-existing files.
-    Tests: none (documentation review).
-    Risks: stale guidance if not updated before validation.
-
-14. What: Run final validation gates and close the plan.
-    Why: explicit acceptance requirement for this phase.
-    How: run `shellcheck`, `tests/run-scenarios.sh go-agent`, and `ralph validate work`.
-    Edge cases: validation failures must be corrected before moving to work phase.
-    Tests: record failures + fix plan.
-    Risks: tooling drift or missing go toolchain in environment causing false negatives.
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
+- `.github/workflows` directory does not exist in repo.
+- CHANGED_FILES set but no workflow path matches and no direct discovery files exist.
+- CHANGED_FILES contains non-workflow files only.
+- CHANGED_FILES path separators differ on platform (existing convention keeps space-delimited paths only).
+- `actionlint` unavailable even though fixture says required tool present.
+- actionlint emits non-zero while no output, or output without diagnostics.
+- Help invoked before toolchain install or from non-repo directory.
+- CI versus local behavior around log line truncation due shared MAX_LINES defaults.
+- Installer path mismatch on remote install if `gha-agent` files absent or script not executable.
+- README/AGENTS snippets can become stale if not updated with new agent line.
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
 
 codex
-The plan is written. I’ll now run the requested plan validation command and then summarize any required fixes before completing.
+I’ve written the full plan and appended the exploration notes. I’ll now validate with `ralph validate plan` and then fix any format or completeness issues flagged by validation before responding.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc 'ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ralph validate plan
 ----------------------------------------
   PASS: work-plan.txt has valid format
   INFO: 14 checklist items found
 ----------------------------------------
 RESULT: PASS
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
-
-codex
-I validated the plan format successfully; next I’ll run the requested full-work validation pass to confirm whether this repository is clean for `work`-phase execution and capture any needed follow-ups.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate work' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
-ralph validate work
-----------------------------------------
-  PASS: work-summary.txt exists (55 lines)
-  FAIL: 14 unchecked items remain in work-plan.txt
-    - [ ] 1. Confirm go-agent scope and current runner contract by reviewing `.ralph/task.md`, `.ralph/specs/04-go-agent.md`, `docs/agents/add-x-agent.md`, and existing shared-lib patterns.
-    - [ ] 2. Create `skills/go-agent/scripts/go-agent.sh` with shared-lib sourcing (`lib/x-agent-common.sh`) and domain-step execution only.
-    - [ ] 3. Implement universal and go-specific knobs in `go-agent.sh` with safe defaults and CI-aware `FMT_MODE` behavior (`auto` => CI check, local fix).
-    - [ ] 4. Implement `run_fmt` using `gofmt -l` in check mode and `gofmt -w` in fix mode, including structured result/fix hints and CHANGED_FILES scoped targets.
-    - [ ] 5. Implement `run_vet` with `go vet` and `staticcheck` detection wrapper, keeping `staticcheck` optional with required skip message and scoped/unscope package execution.
-    - [ ] 6. Implement `run_test` using `go test` with failing test extraction from `--- FAIL:` lines and rich `Fix:` hint.
-    - [ ] 7. Implement robust CHANGED_FILES-to-package mapping for Go fixtures and package args for `go vet`, `staticcheck`, and `go test`.
-    - [ ] 8. Add command dispatch (`fmt`, `vet`, `staticcheck`, `test`, `all`, plus `--fail-fast`, `help`/`-h` before need()) and final `Overall` flow with `overall_ok` accumulation.
-    - [ ] 9. Create `skills/go-agent/SKILL.md` with trigger text and allowed-tools including `FMT_MODE=*` and CHANGED_FILES.
-    - [ ] 10. Add `tests/go-agent/clean/scenario.env` and `tests/go-agent/issues/scenario.env` with required fixtures (`go.mod`, `main.go`) and `REQUIRED_TOOLS="go"`.
-    - [ ] 11. Update `install.sh` to include `go-agent` in skill selection, dependency checks, and AGENTS/CLAUDE snippet.
-    - [ ] 12. Update `README.md` to list go-agent in Available Agents and add usage examples.
-    - [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-    - [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-----------------------------------------
-RESULT: FAIL
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
+/bin/zsh -lc 'date -u +%Y-%m-%dT%H:%M:%SZ' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+2026-03-08T17:27:56Z
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md
+
+## [2026-03-08T17:27:56Z] skip-path-test-coverage
+
+**Frequency**: Each new agent with discoverable path assumptions
+
+**Priority**: MEDIUM
+
+**Current Issue**: Agents with path-dependent discovery (for example workflow discovery, lint target discovery, or scope-only execution) can pass clean/issues fixtures while still missing explicit skip-path assertions.
+
+**Manual Check**: Create and run an explicit no-match fixture by name for each such agent and confirm "'`Result: SKIP` and exit semantics.
+
+**Automated Check**: Add a review/plan-time validation that inspects `FR` requirements or scenario docs for required skip behavior and fails fast if the implementation plan/work item does not include a dedicated skip fixture.
+
+**Status**: PENDING
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
 codex
-Implemented and written:
+I’ve also captured one high-leverage insight in `.ralph/automation-opportunities.md` about skip-path validation. I’ll do one quick final validation pass and then report the result.
+exec
+/bin/zsh -lc 'ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+ralph validate plan
+----------------------------------------
+  PASS: work-plan.txt has valid format
+  INFO: 14 checklist items found
+----------------------------------------
+RESULT: PASS
+codex
+Created. The plan is written to:
 
-- `[.ralph/work-plan.txt](/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt)` now contains a full implementation plan with:
-  - Checklist-first format (all items unchecked as required),
-  - Architecture Review,
-  - Code Quality Planning,
-  - Test Strategy,
-  - Performance Considerations,
-  - Decision Log,
-  - Edge Cases/Risks,
-  - Step-by-step implementation plan.
+- [work-plan](./.ralph/work-plan.txt)
 
-- `[.ralph/exploration.md](/Users/chrisraethke/projects/x-agent/.ralph/exploration.md)` has been updated with go-agent-specific findings and current repo/CI notes before plan completion.
+I also updated:
+
+- [exploration notes](./.ralph/exploration.md) with the gha-agent-oriented discovery findings.
+- [automation opportunities](./.ralph/automation-opportunities.md) with a new high-leverage skip-path coverage insight.
 
 Validation run:
 
-- `ralph validate plan` → `PASS`.
-- `ralph validate work` → `FAIL` (expected at this phase): all 14 checklist items are still unchecked in the plan, so this is a planning artifact, not post-implementation completion.
-
-If you want, I can proceed immediately to the implementation phase for `.ralph/specs/04-go-agent.md` using this plan.
-file update:
-diff --git a/.ralph/exploration.md b/.ralph/exploration.md
-index 820fb33c73b95ecae651d81d602132b6eff1e35c..76117762e3c4727d33b1854f6102573bc1d3a183
---- a/.ralph/exploration.md
-+++ b/.ralph/exploration.md
-@@ -18,6 +18,10 @@
- - `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
- - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
- - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-+- `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
-+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
-+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
- 
- ## Patterns & Conventions
- 
-@@ -31,6 +35,7 @@
- - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
- - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
- - New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
-+- Current CHANGED_FILES handling across existing agents uses whitespace splitting; paths with spaces are not handled, so path-safe quoting is still a technical debt item.
- 
- ## Database Schema
- 
-@@ -44,7 +49,8 @@
- - `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
- - `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
- - `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
--- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-+- `tests/run-scenarios.sh` supports scenario filtering by path fragment (e.g., `go-agent`) for focused verification.
-+- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`; there is currently no go-agent matrix/job.
- 
- ## Architecture & Data Flow
- 
-
+- `ralph validate plan` → **PASS** (14 checklist items found, valid format).
 tokens used
-111,161
-Implemented and written:
+91,839
+Created. The plan is written to:
 
-- `[.ralph/work-plan.txt](/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt)` now contains a full implementation plan with:
-  - Checklist-first format (all items unchecked as required),
-  - Architecture Review,
-  - Code Quality Planning,
-  - Test Strategy,
-  - Performance Considerations,
-  - Decision Log,
-  - Edge Cases/Risks,
-  - Step-by-step implementation plan.
+- [work-plan](./.ralph/work-plan.txt)
 
-- `[.ralph/exploration.md](/Users/chrisraethke/projects/x-agent/.ralph/exploration.md)` has been updated with go-agent-specific findings and current repo/CI notes before plan completion.
+I also updated:
+
+- [exploration notes](./.ralph/exploration.md) with the gha-agent-oriented discovery findings.
+- [automation opportunities](./.ralph/automation-opportunities.md) with a new high-leverage skip-path coverage insight.
 
 Validation run:
 
-- `ralph validate plan` → `PASS`.
-- `ralph validate work` → `FAIL` (expected at this phase): all 14 checklist items are still unchecked in the plan, so this is a planning artifact, not post-implementation completion.
-
-If you want, I can proceed immediately to the implementation phase for `.ralph/specs/04-go-agent.md` using this plan.
+- `ralph validate plan` → **PASS** (14 checklist items found, valid format).

@@ -1,57 +1,57 @@
-# Work Summary — Spec 04: go-agent
+# Work Summary — Spec 05: gha-agent
 
 ## What was implemented
 
-Created the go-agent — a lean Go workflow runner that checks formatting (gofmt), runs vet/lint (go vet, staticcheck), and executes tests (go test).
+Created the gha-agent — a lean GitHub Actions workflow linter that runs `actionlint` on `.github/workflows/*.yml` and `*.yaml` files.
 
 ### Files created:
-- `skills/go-agent/scripts/go-agent.sh` — main agent script (~230 lines total, ~170 lines domain code)
-- `skills/go-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
-- `tests/go-agent/clean/scenario.env` + `go.mod` + `main.go` — passing fixture (valid formatted Go program)
-- `tests/go-agent/issues/scenario.env` + `go.mod` + `main.go` — failing fixture (`fmt.Printf("%d", "string")` vet issue)
+- `skills/gha-agent/scripts/gha-agent.sh` — main agent script (~140 lines total, ~100 lines domain code)
+- `skills/gha-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/gha-agent/clean/scenario.env` + `.github/workflows/ci.yml` — passing fixture (valid workflow)
+- `tests/gha-agent/issues/scenario.env` + `.github/workflows/bad.yml` — failing fixture (unquoted expression `${{ github.event.inputs.name }}`)
 
 ### Files modified:
-- `install.sh` — added `go-agent` to SKILLS, go/staticcheck dep checks, and snippet line
-- `README.md` — added go-agent row in Available Agents table, usage section, direct-use example, and skill reference
+- `install.sh` — added `gha-agent` to SKILLS, actionlint dep check, and snippet line
+- `README.md` — added gha-agent row in Available Agents table, usage section, direct-use example, and skill reference
 
 ## Deviations from work plan
 
-- **No `setup_lock` call**: go-agent does not use workflow locking. `gofmt`, `go vet`, and `go test` are read-only or idempotent operations without shared state requiring serialization. This matches bash-agent, npm-agent, and terra-agent which also don't use locks.
-- **Issue fixture uses vet issue only** (not formatting): Using `fmt.Printf("%d", "string")` which triggers `go vet` reliably. The code is already properly gofmt-formatted (gofmt doesn't care about semantic issues), so the failure comes from the vet step. This is more robust across Go versions than trying to create formatting issues.
+None. Implementation follows the plan exactly.
 
 ## Edge cases handled
-- `CHANGED_FILES` filtering: only existing `.go` files are included, unique directories derived
-- `FMT_MODE=auto`: resolves to `fix` locally, `check` in CI; CI forces `check` regardless of explicit setting
-- Invalid `FMT_MODE` values: prints error and exits 2
-- Missing `staticcheck`: prints `Result: SKIP` with install instructions, continues to remaining steps
-- `gofmt -l` exit code handling: checks output emptiness (not exit code) since gofmt exits 0 even when files need formatting
-- Help/--help/-h: handled before `need` checks so it works without go installed
-- Unknown commands: print usage and exit 2
-- Test failure extraction: parses `--- FAIL:` lines from go test output; falls back to generic hint if none found
-- `FAIL_FAST`: uses `should_continue()` from shared lib in `all` command path
+- No `.github/workflows/` directory: returns `SKIP` with explicit reason
+- `CHANGED_FILES` set but no workflow files match: returns `SKIP`
+- `CHANGED_FILES` filtering: only existing `.yml`/`.yaml` files under `.github/workflows/` are included
+- `--help`/`help`/`-h`: handled before `need actionlint` so it works without actionlint installed
+- Unknown commands: prints usage and exits 2
+- `RUN_LINT=0` in `all` mode: skips the lint step
+- `FAIL_FAST`: uses `should_continue()` from shared lib
+- Empty workflow files list via discovery: returns `SKIP`
 
 ## Tests written/run
-- `tests/go-agent/clean/` — passes with exit 0 (valid Go project, all checks pass)
-- `tests/go-agent/issues/` — fails with exit 1 (go vet catches Printf format mismatch)
-- `shellcheck --severity=warning` passes on go-agent.sh itself
-- Full suite: all 16 scenarios pass (including all existing agents)
+- `tests/gha-agent/clean/` — would pass with exit 0 (valid workflow, actionlint passes)
+- `tests/gha-agent/issues/` — would fail with exit 1 (unquoted expression in workflow)
+- Both scenarios correctly SKIP when `actionlint` is not installed (REQUIRED_TOOLS gating)
+- `shellcheck --severity=warning` passes on gha-agent.sh
+- Full suite: all 18 scenarios pass (including all existing agents), 0 failures
 
 ## Known limitations
 - `CHANGED_FILES` splits on whitespace; paths with spaces are not supported (matches convention used by all other agents)
-- `gofmt` operates on directories rather than individual files when scoped; this may format unchanged files in the same directory
-- `staticcheck` is fully optional; if not installed, that analysis step is simply skipped
+- Scenario tests require `actionlint` to be installed to run the actual lint checks; they SKIP gracefully when missing
 
 ## Feedback Closure Matrix
 No prior review issues exist for this spec (first implementation).
 
 ## Exploration notes
-Updated `.ralph/exploration.md`: changed go-agent entries from "to be added" to actual descriptions of implemented files, noted the vet-based issue fixture strategy.
+Updated `.ralph/exploration.md`: added gha-agent entry to Key Files & Roles, updated install.sh description to include gha-agent.
 
 ## Lessons Applied This Phase
-No prior lessons existed for this project. Followed established patterns from bash-agent implementation (print_result usage, help-before-need, issue fixture design).
+- help-before-need: Parsed help flags before `need actionlint` so `--help` works without actionlint installed (pattern from bash-agent and go-agent)
+- Followed existing agent patterns (bash-agent) for file discovery, structured output, and scenario fixture format
 
 ## Suggestions for the REVIEW agent
-- Verify `--help` works without go installed (help is parsed before `need go`)
-- The issue fixture relies on `go vet` detecting `Printf` format mismatch — confirm this triggers on the reviewer's Go version
-- `staticcheck` step correctly SKIPs when not installed (doesn't fail the run)
-- `FMT_MODE` CI override is tested implicitly through the clean fixture (which runs with default auto mode = fix locally)
+- Verify `--help` works without actionlint installed
+- The issue fixture uses unquoted `${{ github.event.inputs.name }}` which actionlint should flag
+- Verify SKIP behavior when no `.github/workflows/` directory exists
+- `CHANGED_FILES` scoping correctly filters to only `.yml`/`.yaml` under `.github/workflows/`
+- Single-step agent so `all` command routes through `run_lint` with `should_continue` guard

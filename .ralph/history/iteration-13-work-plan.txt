@@ -1,18 +1,18 @@
 ## Implementation Checklist
-- [x] 1. Confirm all spec and repository constraints for Spec 05-gha-agent against `.ralph/specs/05-gha-agent.md`, `.ralph/task.md`, and shared agent patterns.
-- [x] 2. Create `skills/gha-agent/scripts/gha-agent.sh` with `#!/usr/bin/env bash`, `set -euo pipefail`, shared-lib source, and FR-1 universal contract.
-- [x] 3. Implement `RUN_LINT` and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`/`CHANGED_FILES` integration through shared helpers.
-- [x] 4. Implement `usage()` and CLI contract: no-arg default `all`, explicit `lint`, `help`/`-h`/`--help`, `--fail-fast`, and unknown-command handling.
-- [x] 5. Implement required-tool validation with `need actionlint` and `--help` behavior that does not require project context or tool availability.
-- [x] 6. Implement `run_lint` with `.github/workflows` discovery, CHANGED_FILES scoping, skip-paths, actionlint execution, log capture, and mandated fix hint.
-- [x] 7. Add explicit `all` orchestration using `should_continue` and step toggles.
-- [x] 8. Add `skills/gha-agent/SKILL.md` with trigger keywords and minimal allowed-tool patterns for `RUN_*`, `CHANGED_FILES`, and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`.
-- [x] 9. Add `tests/gha-agent/clean/` fixtures (`scenario.env`, `.github/workflows/ci.yml`) with `REQUIRED_TOOLS="actionlint"` and `RUN_ARGS="all"`.
-- [x] 10. Add `tests/gha-agent/issues/` fixtures (`scenario.env`, `.github/workflows/bad.yml`) with an actionlint-detectable failure and `REQUIRED_TOOLS="actionlint"`.
-- [x] 11. Extend `install.sh` to include `gha-agent` in `SKILLS`, dependency check section, and AGENTS/CLAUDE snippet.
-- [x] 12. Extend `README.md` with `gha-agent` in Available Agents and usage examples.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Confirm all spec and repository constraints for Spec 05-gha-agent against `.ralph/specs/05-gha-agent.md`, `.ralph/task.md`, and shared agent patterns.
+- [ ] 2. Create `skills/gha-agent/scripts/gha-agent.sh` with `#!/usr/bin/env bash`, `set -euo pipefail`, shared-lib source, and FR-1 universal contract.
+- [ ] 3. Implement `RUN_LINT` and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`/`CHANGED_FILES` integration through shared helpers.
+- [ ] 4. Implement `usage()` and CLI contract: no-arg default `all`, explicit `lint`, `help`/`-h`/`--help`, `--fail-fast`, and unknown-command handling.
+- [ ] 5. Implement required-tool validation with `need actionlint` and `--help` behavior that does not require project context or tool availability.
+- [ ] 6. Implement `run_lint` with `.github/workflows` discovery, CHANGED_FILES scoping, skip-paths, actionlint execution, log capture, and mandated fix hint.
+- [ ] 7. Add explicit `all` orchestration using `should_continue` and step toggles.
+- [ ] 8. Add `skills/gha-agent/SKILL.md` with trigger keywords and minimal allowed-tool patterns for `RUN_*`, `CHANGED_FILES`, and `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST`/`TMPDIR_ROOT`.
+- [ ] 9. Add `tests/gha-agent/clean/` fixtures (`scenario.env`, `.github/workflows/ci.yml`) with `REQUIRED_TOOLS="actionlint"` and `RUN_ARGS="all"`.
+- [ ] 10. Add `tests/gha-agent/issues/` fixtures (`scenario.env`, `.github/workflows/bad.yml`) with an actionlint-detectable failure and `REQUIRED_TOOLS="actionlint"`.
+- [ ] 11. Extend `install.sh` to include `gha-agent` in `SKILLS`, dependency check section, and AGENTS/CLAUDE snippet.
+- [ ] 12. Extend `README.md` with `gha-agent` in Available Agents and usage examples.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 

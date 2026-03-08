@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="bash-agent cargo-agent go-agent npm-agent py-agent terra-agent"
+SKILLS="bash-agent cargo-agent gha-agent go-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -298,6 +298,15 @@ check_optional_deps() {
     fi
   fi
 
+  if skill_selected "gha-agent"; then
+    if command -v actionlint >/dev/null 2>&1; then
+      info "  Found: actionlint"
+    else
+      warn "  Missing: actionlint (needed by gha-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "go-agent"; then
     if command -v go >/dev/null 2>&1; then
       info "  Found: go"
@@ -389,6 +398,9 @@ print_agents_md_snippet() {
     case "$skill" in
       bash-agent)
         echo "- Bash/Shell: use \`/bash-agent\` (syntax/lint)."
+        ;;
+      gha-agent)
+        echo "- GitHub Actions: use \`/gha-agent\` (lint)."
         ;;
       go-agent)
         echo "- Go: use \`/go-agent\` (fmt/vet/staticcheck/test)."

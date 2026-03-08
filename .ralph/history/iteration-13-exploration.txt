@@ -9,8 +9,7 @@
 - `skills/terra-agent/scripts/terra-agent.sh`: refactored agent with optional tooling (tflint), non-mutating checks, and lock-aware sequencing.
 - `tests/run-scenarios.sh`: central test orchestrator for shellcheck plus fixture execution.
 - `tests/<agent>/clean/` and `tests/<agent>/issues/`: per-agent scenario fixtures; each includes `scenario.env` with `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
-- `skills/gha-agent/scripts/gha-agent.sh`: single-step agent running `actionlint` on `.github/workflows/*.yml|*.yaml`; supports CHANGED_FILES scoping, SKIP on missing workflows directory.
-- `install.sh`: installer entrypoint; currently installs `bash-agent`, `cargo-agent`, `gha-agent`, `go-agent`, `npm-agent`, `py-agent`, and `terra-agent`, and patches shared library for local/remote install modes.
+- `install.sh`: installer entrypoint; currently installs `bash-agent`, `cargo-agent`, `go-agent`, `npm-agent`, `py-agent`, and `terra-agent`, and patches shared library for local/remote install modes.
 - `README.md`: human-facing agent catalog, usage examples, and quick-start guidance.
 - `.github/workflows/ci.yml`: CI currently runs scenario slices for bash, cargo, go, npm, py, and terraform agents.
 - `.ralph/specs/05-gha-agent.md`: current specification for the new gha-agent implementation.
