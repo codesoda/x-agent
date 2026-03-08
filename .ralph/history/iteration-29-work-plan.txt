@@ -1,18 +1,18 @@
 ## Implementation Checklist
-- [x] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
-- [x] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
-- [x] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
-- [x] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
-- [x] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
-- [x] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
-- [x] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
-- [x] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
-- [x] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
-- [x] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
-- [x] 11. Update `README.md` with docker-agent in the table and usage examples.
-- [x] 12. Run `ralph validate plan` and fix any format/structure violations.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
+- [ ] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
+- [ ] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
+- [ ] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
+- [ ] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
+- [ ] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
+- [ ] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
+- [ ] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
+- [ ] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
+- [ ] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
+- [ ] 11. Update `README.md` with docker-agent in the table and usage examples.
+- [ ] 12. Run `ralph validate plan` and fix any format/structure violations.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 

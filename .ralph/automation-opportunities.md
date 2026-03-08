@@ -166,3 +166,28 @@
 **Manual Check**: Inspect each agent fixture `scenario.env` for variables read by the agent and verify they are exported when required by harness subprocess execution.
 **Automated Check**: Add a lint/preflight that parses `scenario.env` files for known agent env vars (for example CHANGED_FILES, KUBE_SCHEMAS_DIR, KUBE_IGNORE_MISSING_SCHEMAS) and warns when set without `export`.
 **Status**: PENDING
+
+## [2026-03-08T19:03:00Z] plan-checklist-sequence-validation
+
+**Frequency**: Repeated in planning turns where steps are inserted late in the plan
+**Priority**: HIGH
+**Current Issue**: Duplicate or out-of-order checklist numbers can slip in while still passing manual review, making downstream execution ordering ambiguous.
+**Manual Check**: Inspect the final two checklist items and numbering continuity before handoff.
+**Automated Check**: Add `ralph validate plan` rule to enforce strictly increasing checklist item numbers and exact ordering of the last two mandated items:
+- penultimate: `Update \.ralph/exploration\.md ...`
+- final: `All acceptance criteria pass — run \`ralph validate work\` and confirm PASS`
+**Status**: PENDING
+
+## [2026-03-08T18:31:51Z] scoped-agent-build-check-command-coverage
+
+**Frequency**: Repeated across scoped agents with optional command-specific steps
+
+**Priority**: MEDIUM
+
+**Current Issue**: New agent acceptance relies heavily on fixture exit-code checks, but optional commands (like `build-check`) can remain untested at command level, allowing regressions in dispatch and skip semantics.
+
+**Manual Check**: Verify there is at least one fixture explicitly invoking each supported command and expected skip/fail branch.
+
+**Automated Check**: Extend scenario validation to require a command-matrix fixture when a spec lists multiple commands, including at least one run per command plus expected `Result:` reason checks.
+
+**Status**: PENDING

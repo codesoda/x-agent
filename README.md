@@ -17,6 +17,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
 | `gha-agent` | GitHub Actions | lint (actionlint) |
 | `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
 | `helm-agent` | Helm | lint, template |
@@ -57,6 +58,9 @@ path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
 # Python project
 path/to/x-agent/skills/py-agent/scripts/py-agent.sh
 
+# Docker project
+path/to/x-agent/skills/docker-agent/scripts/docker-agent.sh
+
 # GitHub Actions project
 path/to/x-agent/skills/gha-agent/scripts/gha-agent.sh
 
@@ -93,6 +97,16 @@ cargo-agent.sh clippy       # clippy only
 cargo-agent.sh test         # tests only
 cargo-agent.sh test -p api  # tests in a specific crate
 ```
+
+### docker-agent
+
+```sh
+docker-agent.sh                        # full suite: lint only (build-check off by default)
+docker-agent.sh lint                   # hadolint check only
+RUN_BUILD_CHECK=1 docker-agent.sh all  # lint + BuildKit check
+```
+
+`docker-agent` discovers `Dockerfile`, `Dockerfile.*`, and `*.dockerfile` files recursively. `build-check` uses `docker build --check` (BuildKit lint mode) and defaults to OFF. Reports SKIP when no Dockerfiles are found.
 
 ### gha-agent
 
@@ -222,6 +236,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 
 - `/bash-agent` — run shell script checks
 - `/cargo-agent` — run Rust checks
+- `/docker-agent` — run Dockerfile linting
 - `/gha-agent` — run GitHub Actions workflow linting
 - `/go-agent` — run Go checks
 - `/helm-agent` — run Helm chart checks

@@ -8,7 +8,7 @@ approval: never
 sandbox: workspace-write [workdir, /tmp, $TMPDIR]
 reasoning effort: xhigh
 reasoning summaries: none
-session id: 019cceaf-70e5-7273-a81a-629c73a8f26f
+session id: 019cceb7-ed10-7411-99ce-57638bf24f98
 --------
 user
 You are the REVIEW agent for RALPH (Recursive Autonomous Loop with Planning & Human-oversight).
@@ -63,131 +63,108 @@ Extract shared boilerplate from existing agents into a common library, then ship
 
 
 **Current Specification:**
-# Spec 07: kube-agent
+# Spec 08: docker-agent
 
 ## Objective
 
-Create a new kube-agent that validates Kubernetes manifests using `kubeconform` (preferred) or `kubeval`.
+Create a new docker-agent that lints Dockerfiles with `hadolint` and optionally runs BuildKit `--check` mode.
 
 ## Source
 
-- **PRD User Story:** US-006
+- **PRD User Story:** US-007
 - **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
 ## User Story Context
 
-> As a developer, I want a kube-agent that validates Kubernetes manifests so I can catch schema errors before applying to a cluster.
+> As a developer, I want a docker-agent that lints Dockerfiles and optionally runs BuildKit checks so I can catch issues before CI builds.
 
 ## Functional Requirements
 
 - FR-1: Sources `lib/x-agent-common.sh`
 - FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_VALIDATE)
+- FR-3: Per-step toggles (RUN_LINT, RUN_BUILD_CHECK)
 - FR-4: Structured output
 - FR-5: --fail-fast and --help
-- FR-6: Requires kubeconform OR kubeval (exit 2 if neither found)
+- FR-6: Required tools (hadolint); optional (docker for build-check)
 - FR-11, FR-12, FR-13: SKILL.md, install.sh, scenario tests
 
 ## Components
 
-- **Create:** `skills/kube-agent/scripts/kube-agent.sh`
-- **Create:** `skills/kube-agent/SKILL.md`
-- **Create:** `tests/kube-agent/clean/` (scenario.env + valid K8s manifests)
-- **Create:** `tests/kube-agent/issues/` (scenario.env + invalid manifests)
+- **Create:** `skills/docker-agent/scripts/docker-agent.sh`
+- **Create:** `skills/docker-agent/SKILL.md`
+- **Create:** `tests/docker-agent/clean/` (scenario.env + valid Dockerfile)
+- **Create:** `tests/docker-agent/issues/` (scenario.env + bad Dockerfile)
 - **Modify:** `install.sh`
 - **Modify:** `README.md`
 
 ## Implementation Details
 
-### Script: `kube-agent.sh`
+### Script: `docker-agent.sh`
 
 **Agent-specific knobs:**
 ```bash
-RUN_VALIDATE="${RUN_VALIDATE:-1}"
-KUBE_SCHEMAS_DIR="${KUBE_SCHEMAS_DIR:-}"  # optional custom schema location
+RUN_LINT="${RUN_LINT:-1}"
+RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
 ```
 
-**Tool detection:**
-```bash
-KUBE_VALIDATOR=""
-if command -v kubeconform >/dev/null 2>&1; then
-  KUBE_VALIDATOR="kubeconform"
-elif command -v kubeval >/dev/null 2>&1; then
-  KUBE_VALIDATOR="kubeval"
-else
-  echo "Missing required tool: kubeconform or kubeval" >&2
-  echo "Install kubeconform: go install github.com/yannh/kubeconform/cmd/kubeconform@latest" >&2
-  echo "Or kubeval: https://www.kubeval.com/installation/" >&2
-  exit 2
-fi
-echo "Validator: $KUBE_VALIDATOR"
-```
+**Required tools:** `need hadolint`
+**Optional tools:** docker (for build-check, skip with notice)
 
-**File discovery:**
-- Find all `.yml`/`.yaml` files recursively (excluding `.github/`, `node_modules/`, `.git/`, `charts/` (Helm territory))
-- Filter to Kubernetes manifests: files that contain both `apiVersion:` and `kind:` (use grep)
-- If CHANGED_FILES set, filter to only those files
-- If no K8s manifests found: SKIP
+**Dockerfile discovery:**
+- If CHANGED_FILES set, filter to Dockerfile-like files
+- Otherwise, find files matching: `Dockerfile`, `Dockerfile.*`, `*.dockerfile` (recursive, excluding `.git/`, `node_modules/`)
+- If no Dockerfiles found: SKIP all steps
 
-**Step: validate**
-- kubeconform: `kubeconform -summary -output json <files>`
-  - If KUBE_SCHEMAS_DIR set: `-schema-location $KUBE_SCHEMAS_DIR`
-- kubeval: `kubeval --strict <files>`
-  - If KUBE_SCHEMAS_DIR set: `--schema-location $KUBE_SCHEMAS_DIR`
-- Report count of valid/invalid resources
-- Fix hint: `Fix: resolve schema validation errors above, then re-run: /kube-agent validate`
+**Step: lint**
+- Run `hadolint <dockerfile>` for each discovered Dockerfile
+- hadolint outputs one issue per line with severity
+- Collect all results, log to disk
+- Fix hint: `Fix: resolve hadolint issues above, then re-run: /docker-agent lint`
 
-**Commands:** `validate`, `all` (default)
+**Step: build-check (opt-in)**
+- Defaults to OFF (`RUN_BUILD_CHECK=0`)
+- If enabled and docker not installed: `Result: SKIP (docker not found)`
+- If enabled: run `docker build --check -f <dockerfile> .` for each Dockerfile
+  - `--check` is BuildKit's lint mode — no image is built
+- Fix hint: `Fix: resolve build check errors above, then re-run: /docker-agent build-check`
+
+**Commands:** `lint`, `build-check`, `all` (default — lint only unless build-check enabled)
 
 ### Scenario Tests
 
-**clean fixture (`tests/kube-agent/clean/`):**
-- `deployment.yaml`: valid Kubernetes Deployment manifest
-  ```yaml
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: test-app
-  spec:
-    replicas: 1
-    selector:
-      matchLabels:
-        app: test
-    template:
-      metadata:
-        labels:
-          app: test
-      spec:
-        containers:
-          - name: app
-            image: nginx:latest
+**clean fixture (`tests/docker-agent/clean/`):**
+- `Dockerfile`: valid, clean Dockerfile
+  ```dockerfile
+  FROM alpine:3.19
+  RUN apk add --no-cache curl
+  COPY . /app
+  CMD ["/app/start.sh"]
   ```
-- REQUIRED_TOOLS="kubeconform" (primary, test will skip if not installed)
+- REQUIRED_TOOLS="hadolint"
+- Note: RUN_BUILD_CHECK=0 in scenario (build-check requires docker daemon)
 
-**issues fixture (`tests/kube-agent/issues/`):**
-- `bad-deployment.yaml`: invalid manifest (e.g., wrong apiVersion, missing required fields, or invalid field names)
-  ```yaml
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: test
-  spec:
-    replicas: "not-a-number"
+**issues fixture (`tests/docker-agent/issues/`):**
+- `Dockerfile`: Dockerfile with hadolint violations
+  ```dockerfile
+  FROM ubuntu:latest
+  RUN apt-get update && apt-get install -y curl
+  ADD . /app
   ```
-- REQUIRED_TOOLS="kubeconform"
+  - Triggers: DL3007 (using latest), DL3009 (delete apt cache), DL3020 (use COPY instead of ADD)
+- REQUIRED_TOOLS="hadolint"
 
 ### SKILL.md
 
-Triggers on: kube agent, kubernetes validate, kubeconform, kubeval, k8s checks, validate manifests.
-Include `KUBE_SCHEMAS_DIR=*` in allowed-tools.
+Triggers on: docker agent, dockerfile lint, hadolint, docker checks, validate dockerfile.
+Include `RUN_BUILD_CHECK=*` in allowed-tools.
 
 ## Test Strategy
 
-- `tests/run-scenarios.sh kube-agent` — clean passes, issues fails
+- `tests/run-scenarios.sh docker-agent` — clean passes, issues fails
 - `shellcheck --severity=warning` passes
-- Verify SKIP when no K8s manifests found
-- Verify non-K8s YAML files are skipped
-- Verify KUBE_SCHEMAS_DIR passthrough
+- Verify SKIP when no Dockerfiles found
+- Verify build-check defaults to OFF
+- Verify build-check skips with notice when docker not found
 
 ## Dependencies
 
@@ -195,15 +172,15 @@ Include `KUBE_SCHEMAS_DIR=*` in allowed-tools.
 
 ## Acceptance Criteria
 
-- [ ] `skills/kube-agent/scripts/kube-agent.sh` exists and is executable
+- [ ] `skills/docker-agent/scripts/docker-agent.sh` exists and is executable
 - [ ] Sources `lib/x-agent-common.sh`
-- [ ] Prefers kubeconform, falls back to kubeval
-- [ ] Exits 2 with message naming both options if neither installed
-- [ ] Validates only YAML files containing apiVersion/kind
-- [ ] KUBE_SCHEMAS_DIR passes through to validator
+- [ ] `lint` step runs `hadolint` on discovered Dockerfiles
+- [ ] Discovers Dockerfiles automatically (Dockerfile, Dockerfile.*, *.dockerfile)
+- [ ] `build-check` defaults OFF, runs `docker build --check` when enabled
+- [ ] `build-check` skips with notice if docker not installed
 - [ ] CHANGED_FILES scoping works
-- [ ] Reports SKIP when no K8s manifests found
-- [ ] Commands: `validate`, `all`
+- [ ] Reports SKIP when no Dockerfiles found
+- [ ] Commands: `lint`, `build-check`, `all`
 - [ ] SKILL.md, install.sh, README.md updated
 - [ ] clean/issues scenario tests pass
 - [ ] shellcheck passes
@@ -211,392 +188,442 @@ Include `KUBE_SCHEMAS_DIR=*` in allowed-tools.
 
 **Work Plan:**
 ## Implementation Checklist
-- [x] 1. Confirm scope and dependencies by reading `.ralph/task.md`, `.ralph/specs/07-kube-agent.md`, `AGENTS.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md`.
-- [x] 2. Finalize the component map for spec 07, including `lib/x-agent-common.sh`, `skills/kube-agent/scripts/kube-agent.sh`, `skills/kube-agent/SKILL.md`, `tests/kube-agent/`, `install.sh`, and `README.md`.
-- [x] 3. Create `skills/kube-agent/scripts/kube-agent.sh` scaffold with Bash 3.2-safe header, strict mode, comment block, shared lib import (`lib/x-agent-common.sh`), and canonical knobs.
-- [x] 4. Add a reusable manifest-discovery helper that recursively finds `.yml`/`.yaml` while pruning `.github/`, `node_modules/`, `.git/`, and `charts/`.
-- [x] 5. Implement dual-validator resolver with strict ordering (`kubeconform` preferred, `kubeval` fallback) and explicit exit-2 failure with install guidance when neither exists.
-- [x] 6. Implement `RUN_VALIDATE` step with explicit file-listing and `CHANGED_FILES` scoping semantics.
-- [x] 7. Filter discovered YAML candidates by content (`apiVersion:` and `kind:` both present) before validation and count final candidate set.
-- [x] 8. Execute kubeconform and kubeval commands with shared output capture, `KUBE_SCHEMAS_DIR` passthrough, and resilient CLI invocation mode for both tools.
-- [x] 9. Build result reporting for pass/fail/skip with explicit `Fix: resolve schema validation errors above, then re-run: /kube-agent validate` and `Overall` summary, using shared helpers from `lib/x-agent-common.sh`.
-- [x] 10. Implement command dispatch for `validate` and `all`, parse `--fail-fast`, parse `help`/`-h`/`--help` before dependency checks, and enforce `FAIL_FAST` across `all`.
-- [x] 11. Add `skills/kube-agent/SKILL.md` with the required triggers, environment knobs, and allowed-tools (`RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs, `CHANGED_FILES`).
-- [x] 12. Add `tests/kube-agent/clean/` and `tests/kube-agent/issues/` scenarios with required tool gating and manifest fixtures.
-- [x] 13. Add focused kube-agent edge scenarios for `CHANGED_FILES` scoping and explicit no-manifest skip behavior.
-- [x] 14. Update `install.sh` to include `kube-agent` in selectable skills, optional dependency checks for `kubeconform`/`kubeval`, and AGENTS/CLAUDE snippet text.
-- [x] 15. Update `README.md` agent inventory and usage examples to include `kube-agent`.
-- [x] 16. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 17. All acceptance criteria pass -- run `ralph validate work` and confirm PASS.
+- [x] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
+- [x] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
+- [x] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
+- [x] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
+- [x] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
+- [x] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
+- [x] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
+- [x] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
+- [x] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
+- [x] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
+- [x] 11. Update `README.md` with docker-agent in the table and usage examples.
+- [x] 12. Run `ralph validate plan` and fix any format/structure violations.
+- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 
-### System Design and Component Boundaries
-The kube-agent is a command-wrapper service that follows the existing x-agent composition pattern: one domain script for orchestration, one SKILL contract, one scenario suite, and two repository metadata touchpoints (`install.sh`, `README.md`). Runtime responsibilities stay in `skills/kube-agent/scripts/kube-agent.sh`; shared runtime behavior remains in `lib/x-agent-common.sh`.
-
-The domain script owns:
-1) CLI parsing for `validate` and `all`,
-2) external tool detection and selection,
-3) manifest discovery and scope resolution,
-4) one validation execution path with unified logging, and
-5) output contract rendering.
-
-Shared dependencies stay outside domain logic, including output helpers, temp dir lifecycle, lock handling, and fail-fast gating.
+### System Design and Boundaries
+- `docker-agent` is a thin orchestrator over local tools and discovery logic: it accepts CLI/env inputs, normalizes scope, runs one or more steps, and emits standardized output.
+- Universal components come from `lib/x-agent-common.sh`.
+- Agent-specific logic lives entirely in `skills/docker-agent/scripts/docker-agent.sh` and covers: knob defaults, discovery, two checks, output orchestration, and command routing.
+- Metadata and integration points are external: `tests/run-scenarios.sh` (fixtures), `install.sh` (installation & discovery), and `README.md` / SKILL.md (operator contracts).
 
 ### Dependency Graph and Coupling
-The execution critical path is local-first and file-driven. `kube-agent` depends on one of `kubeconform` or `kubeval`. It also depends on repository files and environment knobs. Coupling points:
-1) Path conventions (`SCRIPT_DIR/../../../lib`, `OUTDIR`, `TMPDIR_ROOT`) inherited from existing agent scripts.
-2) Scenario runner expectations (`skills/.../scripts/...sh`, scenario env variables, exit-code contract).
-3) Installer and metadata coupling in `install.sh` and `README.md` for discoverability.
-4) `lib/x-agent-common.sh` for shared behavior and clean process semantics.
+- Hard dependency: `hadolint` for `lint`.
+- Optional dependency: `docker` for `build-check`.
+- Runtime coupling: `CHANGED_FILES` and `RUN_*` are passed through environment and used in discovery/gating.
+- Shared-lib coupling: any changes to `x-agent-common.sh` (especially `print_result`, `setup_outdir`, `setup_lock`, `need`) directly affect all agents.
+- Installer coupling: missing `docker-agent` in `SKILLS` and dependency checks blocks user discoverability and installation behavior.
 
-### Data Flow and Failure Paths
-Input enters via env vars (`CHANGED_FILES`, `RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs) and command args. After `--help` handling and tool resolution, `kube-agent` resolves a deterministic manifest set, then runs one validation step.
+### Data Flow and Bottlenecks
+- Data flow: Scenario/env → agent bootstrap → candidate discovery → per-step command execution → logs → structured step output → final exit code.
+- Main bottlenecks are filesystem scans (`find`) and external command execution cost.
+- `all` path is bounded by number of discovered Dockerfiles because each file runs one hadolint command (and one build-check command when enabled).
 
-Data flow details:
-1) `main` parses help/flags/command.
-2) `main` creates `OUTDIR` and (optionally) lock.
-3) discoverer collects candidate YAML files.
-4) scope filter applies `CHANGED_FILES` when present.
-5) manifest filter applies `apiVersion:` and `kind:` checks.
-6) validation command runs on collected files.
-7) `print_result` and `print_overall` produce structured summary.
-
-### Scaling Characteristics and Bottlenecks
-Bottlenecks are filesystem traversal and external validator runtime. On large monorepos with many YAML files, scan + grep dominates. Large changed file lists can amplify scope resolution cost if not capped. Validator runtime scales approximately linearly with manifest count.
-
-Single points of failure are: missing validator binaries, oversized file sets, and unstable tool output formats across versions.
+### Scaling and Single Points of Failure
+- Largest scaling cost appears in broad repository scans; limit recursion to required extensions and exclude common non-project directories as in existing agents.
+- Single points: missing `hadolint`, missing `docker` (for build-check), permissions/access on target repository, and lock file contention across concurrent runs.
+- `setup_lock` in shared lib reduces run collisions but does not avoid tool contention (`docker`/`hadolint` runtime limits).
 
 ### Security Architecture
-No network calls or secret handling is required. Security risks are local command-invocation risks and path handling. Keep command execution argument-safe and avoid `eval`. Do not interpolate user-controlled flags directly into shell expansions unless quoted.
+- No remote auth/API integration in docker-agent.
+- External command execution surface is restricted to shelling out to configured binaries using repository-local file paths from discovery.
+- Risk controls: consistent quoting, controlled candidate lists, and explicit scope filters reduce untrusted path expansion.
 
-### Architectural Decision Options
+### Key Architectural Decisions
 
-Decision A: How to resolve manifest candidates.
-Option 1: `find` recursively + extension filter + content grep for `apiVersion:` and `kind:`. Effort: low, low coupling, predictable. Risk: false positives in edge-case comments/strings, but bounded by domain expectation and test coverage. Maintenance: low, no extra dependencies.
-Option 2: invoke `yq` or parser-based YAML introspection. Effort: medium, parser dependency required. Risk: extra dependency and portability issues across runner environments. Maintenance: medium.
-Option 3: use Kubernetes client tooling directly for strict API object parsing. Effort: high, complexity and performance overhead. Risk: over-engineering versus project constraints.
-Recommended: Option 1.
+Decision 1: discovery strategy
+- Option A (recommended): `find` recursion with explicit prune patterns and `case`/globs for Dockerfile names.
+  - Effort: low, matches existing style. Risk: large trees still scanned.
+- Option B: use `git ls-files` first and filter tracked files.
+  - Effort: medium; misses untracked temporary fixture files and is inconsistent with other agents.
+- Option C: delegate discovery to external index tool.
+  - Effort: high and extra dependency; anti-pattern for this repo.
+- Chosen: Option A.
+- Implication: straightforward integration with existing patterns and no new dependency risk.
 
-Decision B: How to invoke validators.
-Option 1: one batched command with all discovered files. Effort: low, simpler logs, fewer processes. Risk: coarse per-file diagnostics. Maintenance: low.
-Option 2: one command per file with immediate context. Effort: higher, larger number of subprocess calls. Risk: longer runtime on big repos. Maintenance: medium.
-Option 3: hybrid mode by threshold count. Effort: medium/high. Risk: branching complexity and inconsistent output.
-Recommended: Option 1.
+Decision 2: build-check scheduling
+- Option A (default): include `build-check` only when `RUN_BUILD_CHECK=1` and not in clean default `all` path.
+  - Effort: minimal and aligns with FRs.
+- Option B: always run build-check in `all`.
+  - Effort low but slow/expensive and can fail due environment.
+- Option C: run build-check as part of `all` only when `docker` available.
+  - Better defaults than B but still unexpectedly heavy.
+- Chosen: Option A.
+- Implication: prevents expensive defaults while keeping opt-in explicit.
 
-Decision C: When to use `kubeval` branch.
-Option 1: hard-require kubeconform only. Effort: low but lower compatibility. Risk: spec violation (kubeval must be accepted fallback).
-Option 2: prefer kubeconform then fallback to kubeval. Effort: low, aligns with FR-6. Risk: output parsing differences across tools.
-Option 3: try both and merge failures. Effort: medium/high, noisy output and longer runtime.
-Recommended: Option 2.
+Decision 3: logging granularity
+- Option A (recommended): per-file command outputs appended to one step log, with summary `print_result` and truncated stdout.
+  - Effort: medium; clear evidence and easy log discovery.
+- Option B: one log file per file.
+  - Effort high with cleanup/path noise.
+- Option C: stream only final output, no full logs.
+  - Effort low but weak diagnostics and rework-heavy.
+- Chosen: Option A.
+- Implication: keeps logs searchable and consistent with existing agents.
 
-Decision D: Scope testing policy.
-Option 1: only clean/issues fixtures. Effort: low. Risk: silent regressions in `CHANGED_FILES` and skip behavior.
-Option 2: add dedicated no-manifest and scoped fixtures. Effort: moderate. Risk: extra fixture maintenance. Benefit: catches branch-specific regressions early.
-Recommended: Option 2.
-
-### Implications for Future Specs
-Keep discovery/filter helpers thin and explicit because kube-agent introduces a discover/filter/validate pattern likely to be reused by docker/ansible/sql/gha-like agents. Add fixture branches from this spec to reduce future FR-3 regressions.
+### Future Impact
+- Decision choices preserve shared patterns used by upcoming 09/10 agents.
+- `CHANGED_FILES` semantics and scoped fixture expectations should be reused as default for other discovery-based new agents.
+- Explicit optional-step behavior (default-off `RUN_BUILD_CHECK`) sets a precedent for expensive operations in later agents.
 
 ## Code Quality Planning
 
-### Module Structure and Organization
-Keep `kube-agent.sh` small by isolating domain logic into separate helpers: discover, filter, validate, output. Shared behavior must stay in `lib/x-agent-common.sh`, including setup, output contract, and control primitives.
+### Organization and Module Structure
+- Keep one script file under `skills/docker-agent/scripts/` with small helper functions.
+- Maintain one-step-per-function structure: `discover_dockerfiles`, `run_lint`, `run_build_check`.
+- Use `LIB_DIR` + shared-lib sourcing exactly once; avoid duplicating lock/cleanup/parsing helpers.
 
-### DRY Opportunities and Anti-Drift
-High-value dedup points are already available in common lib: `setup_outdir`, `print_result`, `print_overall`, `should_continue`, `need`. The domain script should only define one validator dispatcher function and one validation command builder to avoid duplicated command logic for kubeconform/kubeval.
+### DRY Opportunities and Reuse
+- `step`, `fmt_elapsed`, `need`, `print_result`, `setup_outdir`, `setup_lock`, `print_overall` from common lib.
+- Reuse `RUN_*` pattern and `should_continue` pattern from `all` command.
+- Reuse discovery pattern style from `gha-agent` for `CHANGED_FILES` filtering.
+- Avoid introducing new local utility duplicates for printing `Result/Time` that bypass common helpers.
 
-### Explicit Error Handling Plan
-Failure paths to implement explicitly:
-1) Neither validator installed: print both options and exit `2`.
-2) Unsupported command: usage message and exit `2`.
-3) `kubeconform`/`kubeval` returns non-zero: print truncated output, `Fix` hint, log path, return fail status.
-4) No YAML or no Kubernetes manifests after filtering: `Result: SKIP` and keep exit `0`.
-5) Empty `CHANGED_FILES`: treat as no filter and run full discovery.
-6) `CHANGED_FILES` paths pointing to non-files: ignore safely and continue.
-7) Schema dir passed but invalid: pass-through and leave underlying tool to report.
-8) File list too long for command line: prefer one invocation but document fallback path if needed.
+### Error Handling and Edge Cases (explicit)
+- Required tool missing (`hadolint`): fail fast with exit 2, clear install guidance.
+- Optional `docker` missing while `RUN_BUILD_CHECK=1` or `build-check` command invoked: emit `Result: SKIP (docker not found)` for that step and continue with non-fatal semantics in scoped contexts.
+- No Dockerfiles discovered: emit explicit `Result: SKIP` and treat as success.
+- `CHANGED_FILES` set but no matches: skip with `Result: SKIP` and return success.
+- `CHANGED_FILES` contains paths to non-Dockerfile entries: ignore safely.
+- `docker build --check` exits non-zero for a file: fail step and continue aggregation.
+- Log directory handling: rely on `setup_outdir` for cleanup semantics.
+
+### Engineering Level and Maintainability
+- Prefer predictable, explicit loops over compact one-liners to reduce shell ambiguity.
+- Keep output messages deterministic and aligned with existing contract.
+- Keep `docker-agent.sh` under ~200 LOC of domain-specific code by delegating boilerplate to the shared library.
+- Add comments for decision-sensitive behavior (`RUN_BUILD_CHECK` default OFF, optional skip).
 
 ### Technical Debt Controls
-- No associative arrays or Bash 4-only features.
-- Do not implement custom parsing where existing helper abstractions already exist.
-- Keep fix-hint and skip text stable across changes.
-- Avoid hidden behavior: every branch should print a human-readable reason.
-
-### Engineering Level
-Target implementation is lean and robust, no over-abstraction. The goal is deterministic behavior with explicit branches for optional scoping and fallback tool selection.
+- Document assumptions for expensive operations and file-globbing semantics in `SKILL.md` and script `usage()`.
+- Keep scenario coverage close to FR requirements to prevent silent regressions (especially scope + skip branches).
 
 ## Test Strategy
 
-### Coverage Plan
-Primary verification remains scenario-driven via `tests/run-scenarios.sh` because there is no dedicated unit test framework in this repo. Keep the validation signal as:
-1) harness-level exit assertions,
-2) `shellcheck --severity=warning`, and
-3) manual targeted checks for output text on branch-sensitive behavior.
+### Coverage Scope
+- Smoke/e2e: `tests/run-scenarios.sh docker-agent` (fixture-based).
+- Contract tests for install/README consistency by manual inspection or explicit command checks in work plan run.
+- Shell lint: `shellcheck --severity=warning` via scenario harness.
 
-### Required Test Matrix
-- `tests/run-scenarios.sh kube-agent` (full suite for kube-agent only).
-- `tests/run-scenarios.sh` (global pass as a smoke check after edits).
-- `shellcheck --severity=warning` via harness and direct invocation if needed.
-- Scenario-level fixture expansion for scoped and skip branches.
+### Scenario Plan
+- `tests/docker-agent/clean/` with valid Dockerfile and `REQUIRED_TOOLS="hadolint"` should pass.
+- `tests/docker-agent/issues/` with hadolint violations should fail.
+- Add `tests/docker-agent/scoped-match/` with `CHANGED_FILES` that matches one valid Dockerfile and `EXPECT_EXIT=0`.
+- Add `tests/docker-agent/scoped-no-match/` with `CHANGED_FILES` pointing to unrelated files and `EXPECT_EXIT=0` to assert SKIP.
+- Add `tests/docker-agent/no-dockerfiles/` for explicit no-target SKIP behavior if fixture directory is empty/contains non-matching files.
+- Optional `tests/docker-agent/build-check-off/` to verify command defaults (no build-check when `RUN_BUILD_CHECK=0`).
+- Optional `tests/docker-agent/build-check-skip/` with `RUN_BUILD_CHECK=1` and no `docker` binary via harness assumptions to assert SKIP message semantics (or document as environment-conditioned manual check if harness cannot stub tool removal).
 
-### Edge Cases and Expected Assertions
-- clean fixture with valid Deployment passes (`EXPECT_EXIT=0`, `REQUIRED_TOOLS=kubeconform`).
-- issues fixture with invalid manifest fails (`EXPECT_EXIT=1`, `REQUIRED_TOOLS=kubeconform`).
-- no manifest fixture yields `SKIP` and exits `0`.
-- non-Kubernetes YAML fixture contains `apiVersion` but no `kind` (or vice versa) and must be skipped.
-- CHANGED_FILES scoping where only Kubernetes manifests are inside set.
-- CHANGED_FILES no-match (non-YAML or non-k8s YAML) yields `SKIP`.
-- CHANGED_FILES includes deleted/nonexistent file entries, should still be robust.
-- fallback tool path when kubeconform is absent and kubeval is present.
-- no tool path: tool detection exits `2` with both install hints.
-- `KUBE_SCHEMAS_DIR` custom path included in invoked command for both tools.
-- `--help` works without validator installed.
+### Failure Modes and Error Path Assertions
+- Missing required tool: expect exit code 2 when `hadolint` absent.
+- `lint` failure from file content violations: expect exit 1 and `Fix:` line with `/docker-agent lint`.
+- `build-check` failure: expect exit 1 and `Fix:` line with `/docker-agent build-check`.
+- `CHANGED_FILES` mismatch: expect SKIP and successful exit (0).
 
-### Failure Modes and Error Path Tests
-- command-path unknown command exits `2`.
-- no valid manifests found after discovery returns `SKIP` not `FAIL`.
-- malformed manifest causing validator parse fail returns `1` and `Fix` hint.
-- command dispatch path where `RUN_VALIDATE=0` and `all` should skip and still report pass if no other failures.
-
-### Quality Expectations
-Assertions should check not only exit code but also structured text when possible:
-- `Validator: kubeconform` and `Validator: kubeval` output when branch chosen.
-- `Result: PASS|FAIL|SKIP`, `Fix:` on failures.
-- `Full log: <path>` path exists and is stable for `SKIP`/`FAIL`.
-- `Overall: PASS|FAIL` appears once.
+### Test Quality Rules
+- Assertion strength should validate both behavior and message (exit code plus presence of explicit `Result:` reasons).
+- Use existing harness semantics to avoid shell output brittle diffs.
+- Keep Dockerfile fixtures minimal and deterministic.
 
 ## Performance Considerations
 
-### I/O and Traversal Costs
-`find` plus `grep` is the dominant local cost. Pruning directory trees early (`.git`, `.github`, `.git` directories, `node_modules`, `charts`) is essential to avoid scanning generated/dependency trees.
+### N+1 and Command Cost
+- No database access exists.
+- Avoid repeated directory scans: discover once per command run and reuse candidate set across steps.
+- Avoid nested `find` per file; do exactly one scan per invocation.
 
-### Command Invocation Strategy
-Use one external command call for validation per run to avoid N+1 subprocess overhead. Keep argument list in an array-like helper style where supported; if the argument array becomes too large, we may need a fallback chunking strategy (only if needed in large repos).
+### Memory/State
+- Use line-oriented strings/arrays for discovered file list; avoid holding full file contents.
+- Keep logs stream-based and on disk; avoid in-memory accumulation of full tool output for all files.
 
-### Memory and Log Footprint
-Store discovered file list as newline-separated plain strings in variables to avoid large arrays and keep compatibility with Bash 3.2. Logs go to temp files in `OUTDIR` and are only previewed (first `MAX_LINES`) on terminal.
+### Caching and Reuse
+- Cache discovery result in a variable within invocation.
+- No cross-run cache to avoid stale results in mixed working trees.
 
-### Caching and Future Optimization
-No cross-run cache is justified. Per-run cache of discovered file list and validator selection is sufficient.
+### Slow Paths
+- `find` on large monorepos and repeated `hadolint`/`docker build --check` runs are the two slow paths.
+- Build-check is explicitly opt-in to protect default run-time.
 
-### Hotspots and Risky Paths
-- Large `find` in monorepos.
-- Large manifest files with comments that trigger broad grep matches.
-- Parsing summary output differences between validator versions.
-- Frequent lock contention if lock is added and runs overlap.
-
-## Step-by-Step Implementation Plan
-
-1. What: Validate spec mapping and output contract boundaries before edits.
-Why: Ensures implementation follows FR-4/FR-5/FR-6 and avoids drift from existing agent conventions.
-How: Align each planned change to FR list and acceptance criteria in `.ralph/specs/07-kube-agent.md`.
-Edge Cases: Ensure command set is only `validate` + `all`, and that help path is dependency-independent.
-Tests: Not applicable yet.
-Risks: Over-implementing non-required behaviors.
-
-2. What: Scaffold `skills/kube-agent/scripts/kube-agent.sh` with shared-lib integration and canonical env defaults.
-Why: This establishes the contract baseline used by all subsequent logic.
-How: Copy `bash-agent`/`gha-agent` style structure, set shebang and `set -euo pipefail`, source `x-agent-common.sh`, define `RUN_VALIDATE` and `KUBE_SCHEMAS_DIR` defaults plus universal knobs via shared lib.
-Edge Cases: Keep `SCRIPT_DIR` and `LIB_DIR` path stable for local + remote installs.
-Tests: Source script with `--help` in minimal environment.
-Risks: Incorrect lib path breaks execution.
-
-3. What: Implement tool detection and selection flow.
-Why: FR-6 requires explicit preference and fallback behavior with clear exit-2 guidance.
-How: Set `KUBE_VALIDATOR` via ordered `command -v` checks. If none found, print both required-tool options and `exit 2`.
-Edge Cases: both tools present, only one present, neither present.
-Tests: Scenario environment with missing tools should exit 2 when required.
-Risks: Missing install guidance strings or wrong precedence order.
-
-4. What: Implement recursive YAML discovery with exclusion set.
-Why: Discovery is the core correctness boundary for accuracy and runtime cost.
-How: Build one helper using `find` and prune paths `.github`, `.git`, `node_modules`, `charts` before collecting `*.yml`/`*.yaml`.
-Edge Cases: symlink loops, nested helm chart directories, large trees.
-Tests: no-manifest fixture and clean fixture.
-Risks: Incomplete exclusion list leaks unwanted paths.
-
-5. What: Implement manifest filter by content checks.
-Why: Avoid validating arbitrary YAML not related to Kubernetes objects.
-How: Keep only files containing both `apiVersion:` and `kind:` using grep in deterministic pass over candidate list.
-Edge Cases: lowercase/malformed fields, comments containing tokens, multi-doc YAML; choose exact token scan per spec and cover with tests.
-Tests: fixture with non-k8s YAML should be skipped.
-Risks: false positives/false negatives due text matching.
-
-6. What: Implement CHANGED_FILES scoping after discovery and before validation.
-Why: FR-3 requires scoped execution and explicit skip path when no scoped matches exist.
-How: If `CHANGED_FILES` non-empty, intersect with discovered manifests by exact path match and keep only existing files. Emit a scoped count.
-Edge Cases: whitespace-separated file list, nonexistent files, directories, duplicate entries.
-Tests: scoped-match and scoped-no-match scenarios.
-Risks: whitespace in file names; follow existing space-delimited pattern and document limitation.
-
-7. What: Implement `run_validate` command with unified file batching and schema-location handling.
-Why: FR-8 requires real validation behavior for both tools and custom schema directory support.
-How: Build `cmd` list once per run with file list appended; for kubeconform add `-summary -output json` and optional `-schema-location`; for kubeval add `--strict` and optional `--schema-location`.
-Edge Cases: empty file list, mixed valid/invalid resource files, missing schema location path.
-Tests: clean and issues fixtures plus schema-location fixture.
-Risks: command-line overrun from huge lists; consider fallback chunking only if observed.
-
-8. What: Parse validator output for resource counts and produce stable step output.
-Why: FR requires valid/invalid resource count reporting.
-How: For kubeconform output, try to parse `-output json` summary lines into counts when possible; for kubeval, derive success/failure from exit status and log output count semantics.
-Edge Cases: unsupported output formats from older kubeconform versions.
-Tests: issue fixture should include invalid count; clean fixture may report zero invalid.
-Risks: parser fragility across versions.
-
-9. What: Implement skip, fail, and pass rendering via shared helpers with consistent contract.
-Why: Step contract is hard acceptance: `Step`, `Result`, `Fix`, `Overall`, logs, elapsed time.
-How: Use `step`, `print_result`, `print_overall`, `fmt_elapsed`. For skip path print explicit reason and return success.
-Edge Cases: validator crash producing truncated logs; no output but non-zero exit.
-Tests: no-manifest fixture, validator absent, invalid manifest fixture.
-Risks: omitting `Fix` line on `FAIL`.
-
-10. What: Implement command routing and fail-fast behavior.
-Why: FR-5 requires both command support and runtime control by `--fail-fast`.
-How: Support `validate` and `all`; parse `--fail-fast` and in `all` path use `should_continue` with `RUN_VALIDATE` gate.
-Edge Cases: explicit `all` with `RUN_VALIDATE=0`, unknown command.
-Tests: `validate` command should run direct; `all` should no-op when `RUN_VALIDATE=0`.
-Risks: `overall_ok` not initialized before use.
-
-11. What: Add `skills/kube-agent/SKILL.md` metadata.
-Why: Agent invocation depends on metadata and allowed-tools completeness.
-How: Mirror existing SKILL format for agents, include triggers and `allowed-tools`: `RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `KUBE_SCHEMAS_DIR`, `TMPDIR_ROOT`.
-Edge Cases: missing `TMPDIR_ROOT` entry if project policy requires it.
-Tests: static review before implementation handoff.
-Risks: install/invocation mismatch due missing patterns.
-
-12. What: Create clean fixture and invalid fixture under `tests/kube-agent`.
-Why: baseline pass/fail paths are required by acceptance.
-How: add `clean/deployment.yaml`, `clean/scenario.env`, `issues/bad-deployment.yaml`, `issues/scenario.env` matching spec payloads and `REQUIRED_TOOLS="kubeconform"`.
-Edge Cases: kubeconform absent -> fixture skipped by harness.
-Tests: `tests/run-scenarios.sh kube-agent` expects exit 0 and 1.
-Risks: schema/version differences if manifest fields conflict with old kubeconform.
-
-13. What: Add two scoped/skip fixtures for FR-3 confidence.
-Why: feedback and FR test strategy demand explicit branch coverage for scoped path and no-manifest conditions.
-How: add `tests/kube-agent/no-manifests/` with `SCENARIO_NAME`, no Kubernetes files, `EXPECT_EXIT=0`; add `tests/kube-agent/scoped/` with mixed YAML and `CHANGED_FILES` pointing to a single kube manifest or non-manifest set.
-Edge Cases: ensure scenario-specific `CHANGED_FILES` can be loaded from each env.
-Tests: scenario runs should show `SKIP` in no-match cases and targeted validation in scoped match.
-Risks: fixture naming and scenario collisions across filters.
-
-14. What: Update `install.sh` for installation surface and dependency messaging.
-Why: FR-13 requires skill availability and discoverability.
-How: add `kube-agent` to `SKILLS`; add optional dependency check block for `kubeconform` and `kubeval` (warn only if both missing); add AGENTS/CLAUDE usage line in snippet.
-Edge Cases: remote install path rewrite, local symlink mode, partial tool availability.
-Tests: run local script dry path and parse `--help` output.
-Risks: forgetting to add install snippet line so skill not shown to users.
-
-15. What: Update `README.md` to include `kube-agent` in inventory, usage examples, and checks language.
-Why: required metadata and user-facing discoverability.
-How: add row in table, direct invocation example, and update x-agent checks list.
-Edge Cases: ordering and duplicate lines.
-Tests: manual review and grep verification.
-Risks: stale examples if command names or options drift.
-
-16. What: Update `.ralph/exploration.md` with the current file map and behavior summary.
-Why: reduces re-discovery cost for next plan agent and enforces continuity.
-How: add kube-agent and discovery details (exclusion paths, scope behavior, fixture set).
-Edge Cases: stale notes after implementation.
-Risks: outdated orientation if future refactors change architecture.
-
-17. What: Run final gate and close planning loop.
-Why: required acceptance condition from user and AGENTS.
-How: run `ralph validate plan` then `ralph validate work`; address pass/fail before handoff.
-Edge Cases: missing tooling in environment causing false negatives.
-Risks: failing scenario due expected branch not implemented.
+### Optimization Priority
+- Low: discovery prune patterns (`.git`, `node_modules`) only.
+- Medium: avoid launching docker at all unless explicitly enabled.
+- Optional: use one `hadolint` command per file vs one aggregate command; per-file execution allows exact failure attribution and easier mapping with explicit file-level results, and is acceptable for performance with expected fixture-scale workloads.
 
 ## Decision Log
 
-Decision 1: Prefer kubeconform first, fallback to kubeval.
-Options: (a) hard-require kubeconform, (b) prefer kubeconform and fallback to kubeval, (c) attempt both and combine diagnostics.
-Chosen: (b).
-Impact: deterministic behavior, stable support matrix, minimal runtime, explicit compatibility.
-Implications: future validators can be swapped into a single resolver branch if needed.
+- Decision: Keep discovery in Bash using `find` instead of git-index enumeration.
+  - Options considered:
+    - A) `find` + extension/path filters + CHANGED_FILES narrowing.
+    - B) `git ls-files`-only discovery.
+    - C) external indexing service.
+  - Chosen approach: A.
+  - Implications: deterministic across tracked/untracked files and no extra dependency; aligns with current agent patterns.
 
-Decision 2: Use lightweight grep-based manifest classification.
-Options: (a) extension-only with `apiVersion` + `kind` content filter, (b) YAML parser-based extraction, (c) Kubernetes-aware parse via additional tooling.
-Chosen: (a).
-Impact: zero new dependencies and fast implementation; explicit test coverage required for false positives.
-Implications: include no-manifest and non-k8s YAML fixtures to keep risk bounded.
+- Decision: Keep `build-check` optional and default off.
+  - Options considered:
+    - A) default off with `RUN_BUILD_CHECK=0`.
+    - B) default on with expensive execution overhead.
+    - C) remove command entirely from default flow.
+  - Chosen approach: A.
+  - Implications: faster default run; explicit opt-in controls side effects and required environment.
 
-Decision 3: Enforce branch-specific scenario coverage in test plan.
-Options: (a) rely only on clean/issues, (b) add scoped and skip branches as dedicated scenarios, (c) add scripted ad-hoc test commands outside harness only.
-Chosen: (b).
-Impact: better regression protection where full scans can hide CHANGED_FILES and skip-path bugs.
-Implications: follow this rule for future scoped agents (helm/dock/ansible/sql/ etc.).
+- Decision: Use `print_result` + centralized `hadolint` log per step.
+  - Options considered:
+    - A) shared helper with per-step full log.
+    - B) per-file logs only.
+    - C) no file logs.
+  - Chosen approach: A.
+  - Implications: consistent output contract and easier debugging in downstream workflows.
+
+- Decision: Implement `CHANGED_FILES` semantics with explicit scoped match/no-match coverage.
+  - Options considered:
+    - A) only clean/issues fixtures.
+    - B) add dedicated scoped fixtures for positive and negative matches.
+    - C) no tests, trust code.
+  - Chosen approach: B.
+  - Implications: reduces regression risk for path-based discovery logic and aligns with existing architecture expectations.
+
+## Step-by-Step Implementation Plan
+
+### 1. Baseline and contract lock-in
+What: Read Spec 08, `.ralph/specs/01`, `.ralph/specs/02`, shared-lib file, and existing runner patterns.
+Why: Prevents implementation drift and keeps integration assumptions explicit.
+How: Use the already reviewed reference scripts in bash/go/gha/terra/kube and `run-scenarios` contract.
+Edge Cases: None.
+Tests: No code-level tests needed in this step.
+Risks: Misreading existing defaults and introducing duplicate behavior.
+
+### 2. Create `skills/docker-agent/scripts/docker-agent.sh` scaffold
+What: Add executable script with shebang, `set -euo pipefail`, shared-lib source, and `RUN_LINT`, `RUN_BUILD_CHECK` defaults.
+Why: Establishes required-agent skeleton and compatibility with all global conventions.
+How:
+- Set `RUN_LINT="${RUN_LINT:-1}"`, `RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"`.
+- Keep file paths via `SCRIPT_DIR`, `LIB_DIR`.
+- Call `source "${LIB_DIR}/x-agent-common.sh"` after `set -euo pipefail`.
+- Use `setup_outdir "docker-agent"` and `setup_lock "docker-agent"` in main.
+- Parse `--fail-fast` and command early.
+Edge Cases: None.
+Tests: Run syntax + `shellcheck` later.
+Risks: forgetting `setup_lock` ordering before expensive commands.
+
+### 3. Add usage/help and argument contract
+What: Implement `usage()` output with `lint`, `build-check`, `all` commands and universal/env knobs.
+Why: Required by AGENT quick rules and review expectations.
+How: Follow existing style with command section, env list (`RUN_LINT`, `RUN_BUILD_CHECK`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT`), and fix hints.
+Edge Cases: help must work when dependencies are missing.
+Tests: Manual `docker-agent --help` and `docker-agent -h` from a directory without Dockerfile.
+Risks: inconsistent wording with `Fix`/`Result` contract.
+
+### 4. Implement Dockerfile discovery helper
+What: Add `discover_dockerfiles()` that returns newline-separated Dockerfile candidates.
+Why: Core capability for both steps and scoped behavior.
+How:
+- Default discovery: recursive `find .` with excluded directories `.git`, `node_modules`.
+- Match filenames `Dockerfile`, `Dockerfile.*`, `*.dockerfile`.
+- If `CHANGED_FILES` set: only keep matching files from list; normalize `./` prefix consistently.
+- Sort list for deterministic command order.
+Edge Cases:
+- `CHANGED_FILES` has unrelated files.
+- Duplicate entries are deduplicated.
+- Paths with spaces are intentionally unsupported unless robust parsing is added.
+Tests:
+- Add scoped fixtures for positive and negative `CHANGED_FILES` behavior.
+Risks: Overbroad `find` if prune list misses common directories.
+
+### 5. Implement `lint` step
+What: Add `run_lint` step to invoke `hadolint` on each discovered Dockerfile.
+Why: Satisfies primary FR and catches static Dockerfile issues.
+How:
+- Require `hadolint` via `need hadolint` in `main` before command execution.
+- For each Dockerfile, append output to `${OUTDIR}/lint.log`.
+- Track overall step status and call `print_result` with `Fix: resolve hadolint issues above, then re-run: /docker-agent lint`.
+Edge Cases:
+- One bad file does not hide others; include all diagnostics.
+- `hadolint` missing file path should be surfaced as command error.
+- No files discovered triggers `SKIP`.
+Tests:
+- `tests/docker-agent/issues` should fail with hadolint error markers.
+- `tests/docker-agent/no-dockerfiles` should SKIP.
+Risks: command output suppression on non-failure could hide context.
+
+### 6. Implement `build-check` step
+What: Add `run_build_check` step to execute BuildKit lint mode on each discovered Dockerfile.
+Why: Adds opt-in extra safety while keeping defaults cheap.
+How:
+- If `command -v docker` fails, emit `Result: SKIP (docker not found)` with `print_result` and return success for this step.
+- For each Dockerfile, run `docker build --check -f "$dockerfile" .`.
+- Keep logs in `${OUTDIR}/build-check.log`.
+- Return aggregated exit status across all files.
+Edge Cases:
+- Docker daemon unavailable causes non-zero; do not hide and return failed step unless command requested skip condition.
+- Build context always project root per spec.
+Tests:
+- Manual/fixture command-path `docker-agent build-check` with `RUN_BUILD_CHECK=1` on no-docker env.
+- Add explicit test for skip behavior by dependency absence where feasible.
+Risks: long runtime or daemon permission failures under CI.
+
+### 7. Implement command dispatch and all mode
+What: Add `main` switch for `lint`, `build-check`, `all`, and default/fail-safe handling.
+Why: Meets command contract and orchestrates step ordering.
+How:
+- `lint` executes `run_lint` only.
+- `build-check` executes `run_build_check` only.
+- `all` executes `run_lint` and then `run_build_check` only if `RUN_BUILD_CHECK=1`.
+- Respect `RUN_LINT` and `RUN_BUILD_CHECK` in `all` through `if` and `should_continue` gates.
+- Keep final `print_overall "$overall_ok"` and exit status semantics.
+Edge Cases:
+- Unknown command prints usage and exits 2.
+- `all` should not force build-check due default OFF semantics.
+Tests: `tests/docker-agent/clean` and `issues` for `all` default path.
+Risks: fail-fast ordering and return code inversion.
+
+### 8. Implement `SKILL.md`
+What: Add `skills/docker-agent/SKILL.md` with trigger language and allowed tools.
+Why: Enables agent-level invocation and controls in automation layers.
+How:
+- Follow `add-x-agent.md` format.
+- Include `RUN_BUILD_CHECK=*` and `TMPDIR_ROOT=*` in `allowed-tools`.
+- Include command usage and env knobs table.
+Edge Cases: Missing key trigger phrases can reduce model matching.
+Tests: Manual check via syntax and wording completeness.
+Risks: Incomplete allowed-tools list breaks runtime automation.
+
+### 9. Add scenario fixtures
+What: Create `tests/docker-agent/{clean,issues}` plus scoped/no-match/no-dockerfiles fixtures.
+Why: Validates required behaviors and reduces regressions in discovery/scoping logic.
+How:
+- `clean`: valid Dockerfile fixture, `REQUIRED_TOOLS="hadolint"`.
+- `issues`: bad Dockerfile with DL3007/3009/3020 triggers.
+- `scoped-match`: set `CHANGED_FILES` to Dockerfile path and expect pass.
+- `scoped-no-match`/`no-dockerfiles`: set `CHANGED_FILES` to unrelated/empty context and expect SKIP.
+- Keep fixtures tiny and deterministic.
+Edge Cases:
+- Ensure all consumed variables are exported in scenario.env.
+- build-check command tests may be environment dependent; use command expectations carefully.
+Tests: `tests/run-scenarios.sh docker-agent`.
+Risks: Over-testing command combinations can make execution fragile in minimal environments.
+
+### 10. Update `install.sh`
+What: Add `docker-agent` to install path and dependency checks.
+Why: Required for discoverability and proper installation behavior.
+How:
+- Add `docker-agent` to `SKILLS`.
+- Add optional dependency line for `hadolint` under selected skill checks.
+- Extend README snippet output with docker-agent usage sentence.
+Edge Cases:
+- Missing `docker` should not be required since build-check is opt-in.
+Tests: run `sh install.sh --help` and dry-run style install check.
+Risks: local install script divergence from skill metadata if partial.
+
+### 11. Update `README.md`
+What: Add row and usage examples for docker-agent.
+Why: Keeps user-facing docs aligned with supported agents.
+How:
+- Add table row with steps: `lint, build-check`.
+- Add short usage section with command samples.
+Edge Cases: Keep table formatting stable and avoid drift from existing style.
+Tests: Visual diff + grep for `docker-agent` mention.
+Risks: docs stale if options change later.
+
+### 12. Validate plan structure and metadata updates
+What: Run `ralph validate plan`, then adjust if checklist/format fails.
+Why: Required pre-work gate per process instructions.
+How: Fix any missing sections, checklist numbering, or malformed markdown.
+Edge Cases: validator may enforce exact checklist ordering requirements.
+Tests: command output from `ralph validate plan`.
+Risks: spending time on repeated formatter issues.
+
+### 13. Update exploration and execute final acceptance
+What: Update `.ralph/exploration.md` if this implementation changes documented files, patterns, or schema and run `ralph validate work`.
+Why: Maintains handoff quality and required acceptance gating.
+How:
+- Already added docker-focused entries in exploration file.
+- Run `ralph validate work` and stop only on PASS.
+Edge Cases: Validation may fail on checklist completion state.
+Tests: both `ralph validate plan` and `ralph validate work`.
+Risks: Work acceptance blocked by format-only mismatches.
 
 ## Edge Cases and Risks
+- Discovery overreach in monorepos with many nested `.dockerignore`-like generated files.
+- Paths with spaces in `CHANGED_FILES` can mis-parse if shell loops are plain-word split.
+- `docker build --check` might require daemon/config absent in CI images.
+- `hadolint` output format changes can affect regex-free log expectations.
+- Optional-tool behavior could be misread as global failure when only `build-check` is failing but `lint` passes.
+- `SKIP` vs `FAIL` semantics must remain explicit in each branch to satisfy exit-code expectations.
 
-- CHANGED_FILES contains spaces; current environment parser is whitespace-delimited and not space-safe.
-- `apiVersion:` / `kind:` keys in comments can create false positives.
-- Validator output formats change across versions and may break count extraction.
-- `kubeval` strict mode behavior differs from `kubeconform` summary model.
-- Very large manifest sets may exceed shell argument limits; add fallback chunking only if needed in implementation.
-- `setup_lock` optional for concurrency; decide if needed before finalizing.
-- `charts/` exclusion may unintentionally skip legitimate manifests in chart repo roots; this is intentional to avoid helm domain overlap.
-- No tool installed: `run-scenarios` may skip instead of fail, so manual environment checks remain required for full pass.
-- Installer remote mode may need explicit path assumptions for future local copy of `SKILL.md` and script path.
-- Documentation and install paths can drift from actual command names if not synchronized in one pass.
+## Recommendations for Immediate Implementation Quality
+- Preserve command output contract exactly; use shared helpers for every result boundary.
+- Keep skip semantics explicit and deterministic (`SKIP` on no inputs, no-docker, and empty scope).
+- Use scoped fixtures in addition to base clean/issues so `CHANGED_FILES` behavior is not under-tested.
+- Keep `all` cheap by default with `RUN_BUILD_CHECK=0`.
+
+## Lessons Applied (for this plan)
+- Reuse existing fixture discipline for environment export requirements (`CHANGED_FILES`, optional knobs) before execution.
+- Prefer explicit `SKIP` messaging branches for discoverability and easier fixture assertions.
 
 
 **Work Summary:**
-# Work Summary — Spec 07: kube-agent (REWORK iteration 3)
+# Work Summary — Spec 08: docker-agent
 
 ## What was implemented
 
-Addressed all remaining review feedback from iteration 26. Two targeted fixes:
+Created the complete docker-agent: a lean Dockerfile linter for coding agents.
 
-### R-008: Network-independent test fixtures
-- Added `KUBE_IGNORE_MISSING_SCHEMAS` env knob to `skills/kube-agent/scripts/kube-agent.sh` (default: 0). When set to 1, adds `-ignore-missing-schemas` to kubeconform and `--ignore-missing-schemas` to kubeval.
-- Updated ALL kubeconform/kubeval test fixtures (`clean`, `issues`, `scoped-match`, `schema-dir`, `kubeval-clean`, `kubeval-issues`) to `export KUBE_IGNORE_MISSING_SCHEMAS=1`.
-- Changed `issues` and `kubeval-issues` fixture manifests to contain YAML parse errors (`containerPort: [invalid`) which kubeconform/kubeval detect regardless of schema availability. This ensures EXPECT_EXIT=1 works even when schemas can't be fetched.
-- Updated `usage()` help text in kube-agent.sh to document the new knob.
-- Updated SKILL.md allowed-tools and environment knobs table.
+### Files created:
+- `skills/docker-agent/scripts/docker-agent.sh` — main agent script (~170 LOC domain-specific)
+- `skills/docker-agent/SKILL.md` — Claude Code skill definition with triggers and allowed-tools
+- `tests/docker-agent/clean/` — valid Dockerfile fixture (EXPECT_EXIT=0)
+- `tests/docker-agent/issues/` — bad Dockerfile with hadolint violations (EXPECT_EXIT=1)
+- `tests/docker-agent/scoped-match/` — CHANGED_FILES matching a Dockerfile (EXPECT_EXIT=0)
+- `tests/docker-agent/scoped-no-match/` — CHANGED_FILES with no Dockerfiles (EXPECT_EXIT=0, SKIP)
+- `tests/docker-agent/no-dockerfiles/` — directory with no Dockerfile-like files (EXPECT_EXIT=0, SKIP)
 
-### R-011: kubeval wrapper preserves co-located binaries
-- Rewrote `tests/kube-agent/run-with-kubeval.sh` to use shadow directories with selective symlinks instead of dropping entire PATH directories. When a PATH directory contains kubeconform, a shadow directory is created with symlinks to ALL binaries except kubeconform. This preserves kubeval (and any other tools) when co-located with kubeconform.
-- Shadow directories are created in a temp dir with cleanup trap.
+### Files modified:
+- `install.sh` — added docker-agent to SKILLS list, hadolint dependency check, and AGENTS/CLAUDE snippet
+- `README.md` — added docker-agent to agent table, "Use directly" section, usage section, and skills list
 
 ## Deviations from work plan
 
-None — changes align with existing checklist items (steps 6, 8, 11, 12, 13, 16).
+- Clean Dockerfile fixtures were simplified (removed `RUN apk add --no-cache curl`) because hadolint DL3018 flags unpinned package versions. Using a minimal `FROM/COPY/CMD` Dockerfile avoids false failures.
+- `setup_lock` was intentionally omitted — consistent with gha-agent pattern (single-tool agents don't need lock contention management). The shared lib's lock is optional.
 
 ## Edge cases handled
-- YAML parse errors are detected by kubeconform without network or schema access
-- Shadow directory approach preserves all non-kubeconform binaries including kubeval
-- Cleanup trap ensures shadow temp dirs are removed on exit
-- `KUBE_IGNORE_MISSING_SCHEMAS` works for both kubeconform and kubeval branches
+- No Dockerfiles discovered: emits `Result: SKIP (no Dockerfiles found)` and exits 0
+- CHANGED_FILES set but no Dockerfile matches: emits `Result: SKIP (no Dockerfiles in CHANGED_FILES)` and exits 0
+- build-check defaults OFF (RUN_BUILD_CHECK=0)
+- docker not installed when build-check requested: emits `Result: SKIP (docker not found)` and exits 0
+- Unknown command: prints usage and exits 2
+- help/--help/-h works without hadolint installed
+- Per-file hadolint execution with aggregate logging (one bad file doesn't hide others)
+- Recursive discovery excludes .git, node_modules, vendor directories
 
 ## Tests written/run
-- All 9 kube-agent scenarios pass (7 PASS, 2 SKIP for missing kubeval)
-- Full suite: 30 scenarios, 0 failures
-- shellcheck --severity=warning passes on all modified scripts
+- 5 docker-agent scenarios: all PASS
+- Full suite: 35 scenarios, 0 docker-agent failures (1 pre-existing kube-agent issues failure unrelated to this work)
+- shellcheck --severity=warning passes on all scripts including docker-agent.sh
 
 ## Known limitations
-- kubeval fixtures still skipped in this environment (kubeval not installed)
-- KUBE_IGNORE_MISSING_SCHEMAS changes validation behavior (skips CRDs without schemas); this is documented and off by default
-
-## Feedback Closure Matrix
-- [R-008] RESOLVED: Added KUBE_IGNORE_MISSING_SCHEMAS knob (skills/kube-agent/scripts/kube-agent.sh:16,153,165) and applied to all test fixtures. Issues fixtures use YAML parse errors for network-independent failure detection.
-- [R-011] RESOLVED: Rewrote tests/kube-agent/run-with-kubeval.sh to use shadow directories with selective symlinks, preserving kubeval when co-located with kubeconform.
-- [R-012] RESOLVED: Shadow directory approach in run-with-kubeval.sh handles co-location by symlinking all binaries except kubeconform.
-- [R-013] RESOLVED: kubeval-clean and kubeval-issues fixtures will automatically exercise fallback path when kubeval is installed; wrapper preserves kubeval regardless of co-location.
-- [R-014] RESOLVED: schema-dir fixture now uses KUBE_IGNORE_MISSING_SCHEMAS=1 for deterministic behavior. KUBE_SCHEMAS_DIR="default" passthrough is verified by exit-code assertion.
+- build-check step cannot be tested in scenarios without a Docker daemon
+- Paths with spaces in CHANGED_FILES are not robustly handled (consistent with other agents)
+- hadolint version differences may produce different rule IDs
 
 ## Exploration notes
 Updated `.ralph/exploration.md`:
-- Updated run-with-kubeval.sh description to reflect shadow directory approach
-- Added note about KUBE_IGNORE_MISSING_SCHEMAS knob in patterns section
+- Added docker-agent to the skills reference list with description of its patterns
 
 ## Lessons Applied This Phase
-- Used `export` for scenario.env vars (learned in previous iteration) — applied to KUBE_IGNORE_MISSING_SCHEMAS
-- YAML parse errors are validator-independent failure mode — kubeconform exits non-zero for malformed YAML regardless of schema availability or -ignore-missing-schemas flag
+- Used existing gha-agent as primary pattern reference for single-tool discovery agents
+- Kept clean fixtures minimal to avoid tool-version-dependent lint failures (hadolint DL3018 on unpinned apk packages)
+- Exported CHANGED_FILES in scenario.env (learned from kube-agent iteration — scenario harness runs agents as subprocess)
 
 ## Suggestions for the REVIEW agent
-- R-008 is fully resolved: kubeconform fixtures use -ignore-missing-schemas + YAML parse errors for deterministic offline behavior
-- R-011 is fully resolved: shadow directory approach preserves all co-located binaries
-- kubeval fixtures still show SKIP when kubeval is not installed — this is expected behavior
-- The KUBE_IGNORE_MISSING_SCHEMAS knob is a legitimate user-facing feature for CRD-heavy repos, not just a test hack
+- The kube-agent issues test failure is pre-existing and unrelated to docker-agent changes
+- build-check is intentionally untested in automated scenarios (requires Docker daemon)
+- All 5 docker-agent scenarios pass with hadolint installed
 
 
 **Lessons from Previous Iterations:**
@@ -609,12 +636,12 @@ Updated `.ralph/exploration.md`:
 Example: "can't test in browser—this is a mobile app only" means browser tests aren't expected.
 
 **Previous Review Result:**
-DECISION: REWORK
-ITERATION: 2
+DECISION: SHIP
+ITERATION: 3
 SPEC: 07-kube-agent.md
 
 SUMMARY:
-Spec coverage is substantially complete, but the implementation is not yet release-ready due one previously unresolved issue still affecting determinism in scenario validation and one newly identified fallback-test fragility. Core functionality and most acceptance criteria checks are in place.
+Spec implementation is largely complete and coherent. Previously raised R-008 and R-011 issues are addressed: the kubeconform-only path is made network-independent via `KUBE_IGNORE_MISSING_SCHEMAS` + fixture parse errors, and the kubeval fallback fixture wrapper now removes only `kubeconform` from PATH while preserving co-located binaries.
 
 BLOCKERS:
 None
@@ -623,37 +650,12 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-- [R-008] kubeconform remains network-coupled in fixture execution (`tests/kube-agent/clean/scenario.env:5`, `tests/kube-agent/issues/scenario.env:5`, `tests/kube-agent/scoped-match/scenario.env:5`, `tests/kube-agent/schema-dir/scenario.env:5`, `skills/kube-agent/scripts/kube-agent.sh:152`), so `tests/run-scenarios.sh kube-agent` fails in offline environments even for scenarios expected to pass.
-- [R-011] `tests/kube-agent/run-with-kubeval.sh:14` strips entire PATH directories containing `kubeconform`; when `kubeconform` and `kubeval` share a directory, this drops `kubeval` too and can make kubeval scenarios fail.
+None
 
 NEXT STEPS:
-Return to WORK phase with same plan to fix issues
-
----
-FEEDBACK FOR NEXT PHASE:
-
-Priority fixes:
-1. [R-008] Stabilize kubeconform fixture execution without network dependency so clean/issues/scoped/scheme-dir pass reliably in offline CI/machine contexts.
-2. [R-011] Rework kubeval wrapper so it excludes only the `kubeconform` binary rather than entire PATH entries, preserving `kubeval` resolution when both tools are co-located.
-
-Edge cases to handle:
-1. [R-012] Consider PATH/`kubeconform` and `kubeval` co-location in test environments and prevent false negatives in fallback branch assertions.
-
-Test gaps:
-1. [R-013] Add an environment where both tools are installed to verify fallback path remains valid with the updated wrapper behavior.
-2. [R-014] Add deterministic schema-resolution fixture for kubeconform by using a local schema directory and asserting valid schema-location passthrough from both branches.
+Proceed to next spec
 
 
-**REWORK REVIEW (cycle 3)**
-
-This is rework cycle 3. The WORK agent attempted to fix issues from the previous review.
-
-**Your primary job:**
-1. Check each previously flagged R-ID against the work summary's Feedback Closure Matrix.
-2. Verify the fixes exist in the code. If resolved, mark them resolved.
-3. Only raise NEW issues if they are BLOCKER severity (correctness bugs, spec violations, security).
-4. New MINOR findings may be noted but MUST NOT trigger another REWORK.
-5. If all prior R-IDs are resolved and all acceptance criteria pass, SHIP.
 
 
 **Codebase Exploration Notes:**
@@ -931,61 +933,60 @@ Make an opinionated SHIP/REVISE/REWORK decision based on the four-category evalu
 
 mcp startup: no servers
 codex
-I’ll verify this rework against the spec and prior R-IDs by checking the implementation files, scenarios, and work-plan checklist in one pass, then run `ralph validate review` and record a concise `.ralph/review-result.txt` with either SHIP/REWORK/REVISE.
+I’ll do a fast parallel pass on the implemented files, tests, and checklist metadata (`.ralph/work-plan.txt`, scenarios, script, SKILL, install, README) and then run `ralph validate review` to confirm the phase passes. After that I’ll write `.ralph/review-result.txt` with the decision.
 exec
-/bin/zsh -lc "sed -n '1,260p' AGENTS.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' skills/kube-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' skills/kube-agent/scripts/kube-agent.sh" in /Users/chrisraethke/projects/x-agentexec
 /bin/zsh -lc "sed -n '1,260p' .ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/kube-agent/run-with-kubeval.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' .ralph/specs/07-kube-agent.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# x-agent Contributor Guide
+/bin/zsh -lc "sed -n '1,320p' .ralph/specs/08-docker-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' skills/docker-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' skills/docker-agent/scripts/docker-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg --files tests/docker-agent' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Spec 08: docker-agent
 
-This repository contains lean workflow runners for coding agents.
-Read this file first, then open only the linked docs you need.
+## Objective
 
-## Quick Rules
+Create a new docker-agent that lints Dockerfiles with `hadolint` and optionally runs BuildKit `--check` mode.
 
-- **Bash 3.2 compatible** — no associative arrays, no `readarray`, no `|&`. Optimized for stock macOS.
-- Keep output concise and structured (`Step`, `Result`, `Fix`, `Overall`, log path).
-- Support shared knobs (`RUN_<STEP>`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`).
-- Every `Result: FAIL` must include a `Fix:` hint.
-- The `help`/`--help`/`-h` command must work without project context — resolve it before any project-existence checks.
-- `shellcheck --severity=warning` must pass on all scripts.
-- Ship one backlog item per commit.
+## Source
 
-## Testing
+- **PRD User Story:** US-007
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
-Run `tests/run-scenarios.sh` — it runs shellcheck then all scenario fixtures.
-Each agent needs `clean` (pass) and `issues` (fail) fixtures. CI runs the
-same script across tool-combination matrices (e.g. with/without nextest).
+## User Story Context
+
+> As a developer, I want a docker-agent that lints Dockerfiles and optionally runs BuildKit checks so I can catch issues before CI builds.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs
+- FR-3: Per-step toggles (RUN_LINT, RUN_BUILD_CHECK)
  succeeded in 53ms:
 ---
-name: kube-agent
+name: docker-agent
 description: |
-  Run kube-agent.sh — a lean Kubernetes manifest validator that produces agent-friendly output.
-  Use when: running Kubernetes manifest validation, kubeconform checks, kubeval checks, verifying K8s manifests before applying,
-  or when the user asks to validate Kubernetes YAML, run k8s checks, or check manifests.
-  Triggers on: kube agent, kubernetes validate, kubeconform, kubeval, k8s checks, validate manifests.
+  Run docker-agent.sh — a lean Dockerfile linter that produces agent-friendly output.
+  Use when: running Dockerfile checks, linting Dockerfiles with hadolint, verifying Dockerfiles before committing,
+  or when the user asks to run hadolint, dockerfile lint, or docker checks.
+  Triggers on: docker agent, dockerfile lint, hadolint, docker checks, validate dockerfile.
 context: fork
 allowed-tools:
-  - Bash(scripts/kube-agent.sh*)
-  - Bash(RUN_*=* scripts/kube-agent.sh*)
-  - Bash(KUBE_SCHEMAS_DIR=* scripts/kube-agent.sh*)
-  - Bash(KUBE_IGNORE_MISSING_SCHEMAS=* scripts/kube-agent.sh*)
-  - Bash(MAX_LINES=* scripts/kube-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/kube-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/kube-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/kube-agent.sh*)
-  - Bash(TMPDIR_ROOT=* scripts/kube-agent.sh*)
+  - Bash(scripts/docker-agent.sh*)
+  - Bash(RUN_*=* scripts/docker-agent.sh*)
+  - Bash(MAX_LINES=* scripts/docker-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/docker-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/docker-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/docker-agent.sh*)
+  - Bash(TMPDIR_ROOT=* scripts/docker-agent.sh*)
 ---
 
- succeeded in 53ms:
+# Docker Agent
+
+ succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
-# kube-agent: lean Kubernetes manifest validator for coding agents
-# deps: kubeconform OR kubeval
+# docker-agent: lean Dockerfile linter for coding agents
+# deps: hadolint (required), docker (optional, for build-check)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../../../lib"
@@ -994,316 +995,135 @@ source "${LIB_DIR}/x-agent-common.sh"
 
 # ---- Agent-specific knobs ------------------------------------------------
 
-RUN_VALIDATE="${RUN_VALIDATE:-1}"
-KUBE_SCHEMAS_DIR="${KUBE_SCHEMAS_DIR:-}"
-KUBE_IGNORE_MISSING_SCHEMAS="${KUBE_IGNORE_MISSING_SCHEMAS:-0}"
+RUN_LINT="${RUN_LINT:-1}"
+RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
 
 # ---- Usage ----------------------------------------------------------------
 
 usage() {
- succeeded in 52ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Wrapper that hides kubeconform from PATH so kube-agent falls back to kubeval.
-# Used by kubeval-* test fixtures to exercise the fallback branch (FR-6).
-#
-# Instead of removing entire PATH directories (which drops co-located tools
-# like kubeval), this creates shadow directories with symlinks to everything
-# EXCEPT kubeconform.
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AGENT_SCRIPT="${SCRIPT_DIR}/../../skills/kube-agent/scripts/kube-agent.sh"
-
-SHADOW_ROOT="$(mktemp -d)"
-cleanup() { rm -rf "$SHADOW_ROOT"; }
-trap cleanup EXIT
-
-NEW_PATH=""
-IFS=':'
-for dir in $PATH; do
+  cat <<'EOF'
  succeeded in 53ms:
 ## Implementation Checklist
-- [x] 1. Confirm scope and dependencies by reading `.ralph/task.md`, `.ralph/specs/07-kube-agent.md`, `AGENTS.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md`.
-- [x] 2. Finalize the component map for spec 07, including `lib/x-agent-common.sh`, `skills/kube-agent/scripts/kube-agent.sh`, `skills/kube-agent/SKILL.md`, `tests/kube-agent/`, `install.sh`, and `README.md`.
-- [x] 3. Create `skills/kube-agent/scripts/kube-agent.sh` scaffold with Bash 3.2-safe header, strict mode, comment block, shared lib import (`lib/x-agent-common.sh`), and canonical knobs.
-- [x] 4. Add a reusable manifest-discovery helper that recursively finds `.yml`/`.yaml` while pruning `.github/`, `node_modules/`, `.git/`, and `charts/`.
-- [x] 5. Implement dual-validator resolver with strict ordering (`kubeconform` preferred, `kubeval` fallback) and explicit exit-2 failure with install guidance when neither exists.
-- [x] 6. Implement `RUN_VALIDATE` step with explicit file-listing and `CHANGED_FILES` scoping semantics.
-- [x] 7. Filter discovered YAML candidates by content (`apiVersion:` and `kind:` both present) before validation and count final candidate set.
-- [x] 8. Execute kubeconform and kubeval commands with shared output capture, `KUBE_SCHEMAS_DIR` passthrough, and resilient CLI invocation mode for both tools.
-- [x] 9. Build result reporting for pass/fail/skip with explicit `Fix: resolve schema validation errors above, then re-run: /kube-agent validate` and `Overall` summary, using shared helpers from `lib/x-agent-common.sh`.
-- [x] 10. Implement command dispatch for `validate` and `all`, parse `--fail-fast`, parse `help`/`-h`/`--help` before dependency checks, and enforce `FAIL_FAST` across `all`.
-- [x] 11. Add `skills/kube-agent/SKILL.md` with the required triggers, environment knobs, and allowed-tools (`RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs, `CHANGED_FILES`).
-- [x] 12. Add `tests/kube-agent/clean/` and `tests/kube-agent/issues/` scenarios with required tool gating and manifest fixtures.
-- [x] 13. Add focused kube-agent edge scenarios for `CHANGED_FILES` scoping and explicit no-manifest skip behavior.
-- [x] 14. Update `install.sh` to include `kube-agent` in selectable skills, optional dependency checks for `kubeconform`/`kubeval`, and AGENTS/CLAUDE snippet text.
-- [x] 15. Update `README.md` agent inventory and usage examples to include `kube-agent`.
-- [x] 16. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 17. All acceptance criteria pass -- run `ralph validate work` and confirm PASS.
+- [x] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
+- [x] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
+- [x] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
+- [x] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
+- [x] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
+- [x] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
+- [x] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
+- [x] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
+- [x] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
+- [x] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
+- [x] 11. Update `README.md` with docker-agent in the table and usage examples.
+- [x] 12. Run `ralph validate plan` and fix any format/structure violations.
+- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
- succeeded in 52ms:
-# Spec 07: kube-agent
 
-## Objective
-
-Create a new kube-agent that validates Kubernetes manifests using `kubeconform` (preferred) or `kubeval`.
-
-## Source
-
-- **PRD User Story:** US-006
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
-
-## User Story Context
-
-> As a developer, I want a kube-agent that validates Kubernetes manifests so I can catch schema errors before applying to a cluster.
-
-## Functional Requirements
-
-- FR-1: Sources `lib/x-agent-common.sh`
-- FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_VALIDATE)
-codex
-I have the core agent script and metadata loaded; next I’ll validate the remaining execution paths by reading the tail of the script and the kube-specific test fixtures, plus install/readme/doc touchpoints.
-exec
-/bin/zsh -lc 'find tests/kube-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/kube-agent/scoped-match/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,200p' tests/kube-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '220,520p' skills/kube-agent/scripts/kube-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/kube-agent/no-manifests/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' tests/kube-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-SCENARIO_NAME="kube-agent no-manifests skip"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
- succeeded in 52ms:
-SCENARIO_NAME="kube-agent clean"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
- succeeded in 52ms:
-SCENARIO_NAME="kube-agent scoped-match"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
-export CHANGED_FILES="deployment.yaml"
- succeeded in 52ms:
-tests/kube-agent/clean/deployment.yaml
-tests/kube-agent/clean/scenario.env
-tests/kube-agent/issues/bad-deployment.yaml
-tests/kube-agent/issues/scenario.env
-tests/kube-agent/kubeval-clean/deployment.yaml
-tests/kube-agent/kubeval-clean/scenario.env
-tests/kube-agent/kubeval-issues/bad-deployment.yaml
-tests/kube-agent/kubeval-issues/scenario.env
-tests/kube-agent/no-manifests/scenario.env
-tests/kube-agent/non-k8s-yaml/config.yaml
-tests/kube-agent/non-k8s-yaml/scenario.env
-tests/kube-agent/non-k8s-yaml/settings.yml
-tests/kube-agent/run-with-kubeval.sh
-tests/kube-agent/schema-dir/deployment.yaml
-tests/kube-agent/schema-dir/scenario.env
-tests/kube-agent/scoped-match/deployment.yaml
-tests/kube-agent/scoped-match/scenario.env
-tests/kube-agent/scoped-no-match/deployment.yaml
-tests/kube-agent/scoped-no-match/scenario.env
+### System Design and Boundaries
+- `docker-agent` is a thin orchestrator over local tools and discovery logic: it accepts CLI/env inputs, normalizes scope, runs one or more steps, and emits standardized output.
  succeeded in 53ms:
-      PASS\ -*)  valid=$((valid + 1)) ;;
-      ERR\ -*)   invalid=$((invalid + 1)) ;;
-      WARN\ -*)  errors=$((errors + 1)) ;;
-    esac
-  done < "$log"
-  echo "Resources: ${valid} valid, ${invalid} invalid, ${errors} warnings"
-}
+tests/docker-agent/issues/scenario.env
+tests/docker-agent/issues/Dockerfile
+tests/docker-agent/scoped-match/scenario.env
+tests/docker-agent/scoped-match/Dockerfile
+tests/docker-agent/no-dockerfiles/scenario.env
+tests/docker-agent/no-dockerfiles/not-a-dockerfile.txt
+tests/docker-agent/clean/scenario.env
+tests/docker-agent/clean/Dockerfile
+tests/docker-agent/scoped-no-match/scenario.env
+tests/docker-agent/scoped-no-match/Dockerfile
+codex
+I’ve pulled the core implementation; next I’m checking integration points (`install.sh`, `README.md`, test fixtures content/expectations, and any documented metadata updates) to verify acceptance criteria and checklist conformance end-to-end.
+exec
+/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/scoped-match/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/scoped-match/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' tests/docker-agent/clean/scenario.env && printf '
+---\\n' && sed -n '1,200p' tests/docker-agent/clean/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' tests/docker-agent/issues/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/issues/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/scoped-no-match/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/scoped-no-match/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/no-dockerfiles/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/no-dockerfiles/not-a-dockerfile.txt" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+SCENARIO_NAME="docker-agent scoped-no-match"
+AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=0
+REQUIRED_TOOLS="hadolint"
+export CHANGED_FILES="README.md package.json"
 
-# ---- Main -----------------------------------------------------------------
+---
+FROM alpine:3.19
+RUN apk add --no-cache curl
+COPY . /app
+CMD ["/app/start.sh"]
+ succeeded in 52ms:
+SCENARIO_NAME="docker-agent clean"
+AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=0
+REQUIRED_TOOLS="hadolint"
 
-main() {
-  # Parse help before dependency checks so --help works without validators
-  case "${1:-}" in
-    -h|--help|help)
-      usage
-      exit 0
-      ;;
-  esac
+---
+FROM alpine:3.19
+COPY . /app
+CMD ["/app/start.sh"]
+ succeeded in 52ms:
+SCENARIO_NAME="docker-agent scoped-match"
+AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=0
+REQUIRED_TOOLS="hadolint"
+export CHANGED_FILES="Dockerfile"
 
-  resolve_validator
+---
+FROM alpine:3.19
+COPY . /app
+CMD ["/app/start.sh"]
+ succeeded in 52ms:
+SCENARIO_NAME="docker-agent issues"
+AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT=1
+REQUIRED_TOOLS="hadolint"
+
+---
+FROM ubuntu:latest
+RUN apt-get update && apt-get install -y curl
+ADD . /app
  succeeded in 51ms:
-SCENARIO_NAME="kube-agent issues"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=1
-REQUIRED_TOOLS="kubeconform"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
-exec
-/bin/zsh -lc "sed -n '1,240p' tests/kube-agent/no-manifests/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' tests/kube-agent/scoped-no-match/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' tests/kube-agent/schema-dir/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' tests/kube-agent/non-k8s-yaml/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/kube-agent/kubeval-issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/kube-agent/kubeval-clean/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-SCENARIO_NAME="kube-agent no-manifests skip"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
+SCENARIO_NAME="docker-agent no-dockerfiles skip"
+AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
 RUN_ARGS="all"
 EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
- succeeded in 53ms:
-SCENARIO_NAME="kube-agent schema-dir passthrough"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
-export KUBE_SCHEMAS_DIR="default"
- succeeded in 53ms:
-SCENARIO_NAME="kube-agent scoped-no-match"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
-export CHANGED_FILES="not-here.yaml other-file.txt"
- succeeded in 52ms:
-SCENARIO_NAME="kube-agent non-k8s-yaml"
-AGENT_SCRIPT="skills/kube-agent/scripts/kube-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeconform"
- succeeded in 52ms:
-SCENARIO_NAME="kube-agent kubeval-clean"
-AGENT_SCRIPT="tests/kube-agent/run-with-kubeval.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="kubeval"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
- succeeded in 52ms:
-SCENARIO_NAME="kube-agent kubeval-issues"
-AGENT_SCRIPT="tests/kube-agent/run-with-kubeval.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=1
-REQUIRED_TOOLS="kubeval"
-export KUBE_IGNORE_MISSING_SCHEMAS=1
-exec
-/bin/zsh -lc 'for f in tests/kube-agent/clean/deployment.yaml tests/kube-agent/issues/bad-deployment.yaml tests/kube-agent/kubeval-issues/bad-deployment.yaml tests/kube-agent/kubeval-clean/deployment.yaml tests/kube-agent/schema-dir/deployment.yaml tests/kube-agent/scoped-match/deployment.yaml tests/kube-agent/scoped-no-match/deployment.yaml tests/kube-agent/non-k8s-yaml/config.yaml tests/kube-agent/non-k8s-yaml/settings.yml; do echo "---- $f ----"; sed -n '"'1,200p' \""'$f"; done' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
----- tests/kube-agent/clean/deployment.yaml ----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: test-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: test
-  template:
-    metadata:
-      labels:
-        app: test
-    spec:
-      containers:
-        - name: app
-          image: nginx:latest
----- tests/kube-agent/issues/bad-deployment.yaml ----
-apiVersion: apps/v1
-codex
-I’ve confirmed fixture coverage was added; I’ll now verify registration/docs touchpoints and then run the required review validation command to ensure checklist/tooling status.
+REQUIRED_TOOLS="hadolint"
+
+---
+This is not a Dockerfile.
 exec
 /bin/zsh -lc "sed -n '1,260p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '260,520p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "rg -n \"IMPLEMENTATION CHECKLIST|Implementation Checklist|work-plan|17\\.|02-refactor-existing-agents|07-kube-agent|kube-agent\" .ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'rg -n "kube-agent" README.md' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'rg -n "kube-agent|kubeconform|kubeval" install.sh' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+/bin/zsh -lc "sed -n '1,260p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg -n \"docker-agent|Dockerfile|lint|build-check|hadolint|Docker Agent|docker\" README.md | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg -n \"SKILLS|docker-agent|hadolint|AGENTS|CLAUDE\" install.sh | sed -n '1,240p'" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
 # x-agent Exploration Notes
 
 ## Key Files & Roles
 - `/Users/chrisraethke/projects/x-agent/AGENTS.md`: global agent conventions and output contract.
-- `/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh`: shared Bash helpers used by all agents (`step`, `print_result`, `fmt_elapsed`, `setup_outdir`, `should_continue`, lock helpers, `need`).
-- `/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh`: discovery/execution harness for `clean`, `issues`, and additional fixture directories.
-- `/Users/chrisraethke/projects/x-agent/skills/gha-agent/scripts/gha-agent.sh`: reference for scoped filtering and simple discovery helper patterns.
-- `/Users/chrisraethke/projects/x-agent/skills/helm-agent/scripts/helm-agent.sh`: reference for multi-command agents and chart/scoping patterns.
-- `/Users/chrisraethke/projects/x-agent/skills/bash-agent/scripts/bash-agent.sh`: reference for universal output and fail-fast wiring.
-- `/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh`: reference for alternate validation modes and dependency behavior.
-- `/Users/chrisraethke/projects/x-agent/docs/agents/add-x-agent.md`: onboarding pattern for SKILL.md and allowed-tools.
-- `/Users/chrisraethke/projects/x-agent/docs/agents/scenario-tests.md`: scenario fixture contract and required fields.
-- `/Users/chrisraethke/projects/x-agent/skills/kube-agent/scripts/kube-agent.sh`: Kubernetes manifest validator (kubeconform/kubeval) — discovers `.yml`/`.yaml` with `apiVersion:`+`kind:`, excludes `.git/`, `.github/`, `node_modules/`, `charts/`.
-- `/Users/chrisraethke/projects/x-agent/skills/kube-agent/SKILL.md`: agent metadata with triggers and allowed-tools.
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/clean/`: valid Deployment manifest fixture (EXPECT_EXIT=0).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/issues/`: invalid Deployment manifest fixture (EXPECT_EXIT=1).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/no-manifests/`: empty dir fixture for skip behavior (EXPECT_EXIT=0).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/scoped-match/`: CHANGED_FILES scoping with matching manifest (EXPECT_EXIT=0).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/scoped-no-match/`: CHANGED_FILES scoping with no matches, expects SKIP (EXPECT_EXIT=0).
-- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/non-k8s-yaml/`: non-Kubernetes YAML files only, verifies filter skips them (EXPECT_EXIT=0).
- succeeded in 52ms:
-
- succeeded in 53ms:
-27:SKILLS="bash-agent cargo-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
-319:  if skill_selected "kube-agent"; then
-320:    if command -v kubeconform >/dev/null 2>&1; then
-321:      info "  Found: kubeconform"
-322:    elif command -v kubeval >/dev/null 2>&1; then
-323:      info "  Found: kubeval"
-325:      warn "  Missing: kubeconform or kubeval (needed by kube-agent)"
-428:      kube-agent)
-429:        echo "- Kubernetes: use \`/kube-agent\` (validate manifests)."
- succeeded in 53ms:
-23:| `kube-agent` | Kubernetes | validate (kubeconform/kubeval) |
-70:path/to/x-agent/skills/kube-agent/scripts/kube-agent.sh
-129:### kube-agent
-132:kube-agent.sh              # full suite: validate
-133:kube-agent.sh validate     # validate manifests only
-134:KUBE_SCHEMAS_DIR=path kube-agent.sh all  # custom schema location
-137:`kube-agent` auto-detects kubeconform or kubeval and validates all `.yaml`/`.yml` files containing Kubernetes resource definitions (`apiVersion:` + `kind:`). Use `KUBE_SCHEMAS_DIR` for custom schemas. Reports SKIP when no manifests are found.
-228:- `/kube-agent` — run Kubernetes manifest validation
- succeeded in 53ms:
-1:## Implementation Checklist
-2:- [x] 1. Confirm scope and dependencies by reading `.ralph/task.md`, `.ralph/specs/07-kube-agent.md`, `AGENTS.md`, `docs/agents/add-x-agent.md`, and `docs/agents/definition-of-done.md`.
-3:- [x] 2. Finalize the component map for spec 07, including `lib/x-agent-common.sh`, `skills/kube-agent/scripts/kube-agent.sh`, `skills/kube-agent/SKILL.md`, `tests/kube-agent/`, `install.sh`, and `README.md`.
-4:- [x] 3. Create `skills/kube-agent/scripts/kube-agent.sh` scaffold with Bash 3.2-safe header, strict mode, comment block, shared lib import (`lib/x-agent-common.sh`), and canonical knobs.
-10:- [x] 9. Build result reporting for pass/fail/skip with explicit `Fix: resolve schema validation errors above, then re-run: /kube-agent validate` and `Overall` summary, using shared helpers from `lib/x-agent-common.sh`.
-12:- [x] 11. Add `skills/kube-agent/SKILL.md` with the required triggers, environment knobs, and allowed-tools (`RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs, `CHANGED_FILES`).
-13:- [x] 12. Add `tests/kube-agent/clean/` and `tests/kube-agent/issues/` scenarios with required tool gating and manifest fixtures.
-14:- [x] 13. Add focused kube-agent edge scenarios for `CHANGED_FILES` scoping and explicit no-manifest skip behavior.
-15:- [x] 14. Update `install.sh` to include `kube-agent` in selectable skills, optional dependency checks for `kubeconform`/`kubeval`, and AGENTS/CLAUDE snippet text.
-16:- [x] 15. Update `README.md` agent inventory and usage examples to include `kube-agent`.
-18:- [x] 17. All acceptance criteria pass -- run `ralph validate work` and confirm PASS.
-23:The kube-agent is a command-wrapper service that follows the existing x-agent composition pattern: one domain script for orchestration, one SKILL contract, one scenario suite, and two repository metadata touchpoints (`install.sh`, `README.md`). Runtime responsibilities stay in `skills/kube-agent/scripts/kube-agent.sh`; shared runtime behavior remains in `lib/x-agent-common.sh`.
-35:The execution critical path is local-first and file-driven. `kube-agent` depends on one of `kubeconform` or `kubeval`. It also depends on repository files and environment knobs. Coupling points:
-42:Input enters via env vars (`CHANGED_FILES`, `RUN_VALIDATE`, `KUBE_SCHEMAS_DIR`, universal knobs) and command args. After `--help` handling and tool resolution, `kube-agent` resolves a deterministic manifest set, then runs one validation step.
-87:Keep discovery/filter helpers thin and explicit because kube-agent introduces a discover/filter/validate pattern likely to be reused by docker/ansible/sql/gha-like agents. Add fixture branches from this spec to reduce future FR-3 regressions.
-92:Keep `kube-agent.sh` small by isolating domain logic into separate helpers: discover, filter, validate, output. Shared behavior must stay in `lib/x-agent-common.sh`, including setup, output contract, and control primitives.
-126:- `tests/run-scenarios.sh kube-agent` (full suite for kube-agent only).
-181:How: Align each planned change to FR list and acceptance criteria in `.ralph/specs/07-kube-agent.md`.
-186:2. What: Scaffold `skills/kube-agent/scripts/kube-agent.sh` with shared-lib integration and canonical env defaults.
-249:11. What: Add `skills/kube-agent/SKILL.md` metadata.
-exec
-/bin/zsh -lc "sed -n '1,220p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '240,520p' install.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-  else
-    mkdir -p "$target"
-    cp -R "${SOURCE_DIR}/skills/${skill}/." "$target/"
-    chmod +x "${target}/scripts/"*.sh 2>/dev/null || true
-    info "Installed ${skill} to ${target}"
-  fi
-}
-
-# Install the shared library to a skills root so agent scripts can source it.
-# For local installs, symlink the lib/ directory.
-# For remote installs, copy the fetched lib/ directory.
-install_lib_to_root() {
-  root="$1"
-  target="${root}/lib"
-
-  mkdir -p "$root"
-  rm -rf "$target"
-
-  if [ "$SOURCE_MODE" = "local" ]; then
-    ln -s "${SOURCE_DIR}/lib" "$target"
- succeeded in 53ms:
+- `/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh`: shared Bash helpers for all agents (`step`, `print_result`, `fmt_elapsed`, `setup_outdir`, `setup_lock`, `should_continue`, `need`, `print_overall`).
+- `/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh`: scenario discovery/execution harness used by all agents.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/01-shared-library-extract.md`: base contract for shared boilerplate.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/02-refactor-existing-agents.md`: how cargo/npm/terra were refactored to source shared lib.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/03-bash-agent.md` through `.ralph/specs/08-docker-agent.md`: per-agent requirements and acceptance criteria.
+- `/Users/chrisraethke/projects/x-agent/docs/agents/scenario-tests.md`: required `scenario.env` contract (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, `REQUIRED_TOOLS`).
+- `/Users/chrisraethke/projects/x-agent/docs/agents/definition-of-done.md`: acceptance template for new agent scope.
+- `/Users/chrisraethke/projects/x-agent/docs/agents/add-x-agent.md`: SKILL.md and agent creation pattern.
+- `/Users/chrisraethke/projects/x-agent/install.sh`: skill registry, dependency checks, snippet generation, and library deployment path for `lib/x-agent-common.sh`.
+- `/Users/chrisraethke/projects/x-agent/README.md`: published agent inventory and usage examples.
+- `/Users/chrisraethke/projects/x-agent/skills/*-agent/scripts/*.sh`: reference implementations for shared patterns.
+  - `bash-agent`: minimal runner with syntax/lint workflow.
+  - `gha-agent`: scoped discovery pattern for `CHANGED_FILES`.
+  - `go-agent`: optional build mode + package-scoped execution.
+  - `helm-agent`: multi-command command dispatcher + command-specific failures.
+  - `kube-agent`: validator fallback detection + CHANGED_FILES scoping + skip/fail behavior.
+ succeeded in 51ms:
 #!/bin/sh
 set -eu
 
@@ -1324,8 +1144,97 @@ AUTO_YES=0
 SKIP_DEPS=0
 INSTALL_CODEX=1
 INSTALL_CLAUDE=1
+ succeeded in 51ms:
+14:CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+15:CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+20:INSTALL_CLAUDE=1
+27:SKILLS="bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
+28:SELECTED_SKILLS=""
+60:  At the end, the installer prints a copy/paste snippet for AGENTS.md/CLAUDE.md.
+63:  CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
+64:  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
+121:  case " ${SELECTED_SKILLS} " in
+129:  if [ -z "$SELECTED_SKILLS" ]; then
+130:    SELECTED_SKILLS="$skill"
+132:    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
+138:    SELECTED_SKILLS="$SKILLS"
+143:  for skill in $SKILLS; do
+205:  for skill in $SELECTED_SKILLS; do
+301:  if skill_selected "docker-agent"; then
+302:    if command -v hadolint >/dev/null 2>&1; then
+303:      info "  Found: hadolint"
+305:      warn "  Missing: hadolint (needed by docker-agent)"
+416:  if [ -z "$SELECTED_SKILLS" ]; then
+ succeeded in 51ms:
+3:Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+9:- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+18:| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
+20:| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
+21:| `gha-agent` | GitHub Actions | lint (actionlint) |
+23:| `helm-agent` | Helm | lint, template |
+25:| `npm-agent` | Node.js | format, lint, typecheck, test, build |
+26:| `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
+27:| `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
+62:path/to/x-agent/skills/docker-agent/scripts/docker-agent.sh
+85:bash-agent.sh              # full suite: syntax + lint
+87:bash-agent.sh lint         # shellcheck lint only
+88:SHELLCHECK_SEVERITY=error bash-agent.sh lint  # only errors, ignore warnings
+101:### docker-agent
+104:docker-agent.sh                        # full suite: lint only (build-check off by default)
+105:docker-agent.sh lint                   # hadolint check only
+106:RUN_BUILD_CHECK=1 docker-agent.sh all  # lint + BuildKit check
+109:`docker-agent` discovers `Dockerfile`, `Dockerfile.*`, and `*.dockerfile` files recursively. `build-check` uses `docker build --check` (BuildKit lint mode) and defaults to OFF. Reports SKIP when no Dockerfiles are found.
+114:gha-agent.sh              # lint all workflow files
+115:gha-agent.sh lint         # actionlint check only
+codex
+I’ve confirmed the new fixtures and core script mostly match the requested shape; now I’m validating integration text (`install.sh`, README snippets, explorer notes) and running required validations (`ralph validate review`) with a focused review against each acceptance criterion.
 exec
-/bin/zsh -lc "sed -n '1,220p' README.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc "sed -n '1,340p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '260,520p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,300p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/lib/." "$target/"
+    info "Installed lib to ${target}"
+  fi
+}
+
+# Rewrite SKILL.md paths to point at the actual installed script location.
+patch_skill_paths() {
+  root="$1"
+  skill="$2"
+  skill_md="${root}/${skill}/SKILL.md"
+
+  if [ ! -f "$skill_md" ]; then return; fi
+
+  # For local (symlink) installs, paths already point to the right place via the repo.
+  # For remote installs, update paths to point at the skill's bundled scripts dir.
+  if [ "$SOURCE_MODE" = "remote" ]; then
+    scripts_dir="${root}/${skill}/scripts"
+ succeeded in 52ms:
+#!/usr/bin/env bash
+# x-agent-common.sh — shared boilerplate for x-agent workflow runners.
+# Source this file from agent scripts; it produces no output or side effects.
+# Bash 3.2 compatible.
+
+# ---------------------------------------------------------------------------
+# Environment defaults (agent can override after sourcing)
+# ---------------------------------------------------------------------------
+
+KEEP_DIR="${KEEP_DIR:-0}"
+FAIL_FAST="${FAIL_FAST:-0}"
+CHANGED_FILES="${CHANGED_FILES:-}"
+TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
+
+# CI-aware MAX_LINES: unlimited in CI, concise locally.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
+ succeeded in 52ms:
 # x-agent
 
 Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
@@ -1345,19 +1254,8 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
-| `gha-agent` | GitHub Actions | lint (actionlint) |
-exec
-/bin/zsh -lc "stat -c '%A %n' skills/kube-agent/scripts/kube-agent.sh tests/kube-agent/run-with-kubeval.sh" in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
-stat: illegal option -- c
-usage: stat [-FLnq] [-f format | -l | -r | -s | -x] [-t timefmt] [file ...]
-exec
-/bin/zsh -lc "stat -f '%Sp %N' skills/kube-agent/scripts/kube-agent.sh tests/kube-agent/run-with-kubeval.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
--rwxr-xr-x skills/kube-agent/scripts/kube-agent.sh
--rwxr-xr-x tests/kube-agent/run-with-kubeval.sh
-codex
-I’ve verified registration and fixtures; next I’m checking scenario-runner semantics and then running the required `ralph validate review` command for closure.
-exec
-/bin/zsh -lc "sed -n '1,360p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
+ succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -1379,57 +1277,71 @@ Examples:
   tests/run-scenarios.sh cargo-agent
   tests/run-scenarios.sh npm-agent/issues
 exec
-/bin/zsh -lc 'ralph validate review' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
+/bin/zsh -lc 'ls -l skills/docker-agent/scripts/docker-agent.sh install.sh' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+-rwxr-xr-x@ 1 chrisraethke  staff  14032 Mar  9 04:27 install.sh
+-rwxr-xr-x@ 1 chrisraethke  staff   5460 Mar  9 04:26 skills/docker-agent/scripts/docker-agent.sh
+exec
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
 ralph validate review
 ----------------------------------------
   FAIL: review-result.txt does not exist
 ----------------------------------------
 RESULT: FAIL
 exec
-/bin/zsh -lc "rg -n \"Result: SKIP|print_result\\(|CHANGED_FILES\" skills/helm-agent/scripts/helm-agent.sh skills/gha-agent/scripts/gha-agent.sh skills/bash-agent/scripts/bash-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-skills/gha-agent/scripts/gha-agent.sh:34:  CHANGED_FILES="a.yml b.yml"  Scope to specific files
-skills/gha-agent/scripts/gha-agent.sh:47:  if [[ -n "${CHANGED_FILES:-}" ]]; then
-skills/gha-agent/scripts/gha-agent.sh:48:    # Filter CHANGED_FILES to existing .yml/.yaml under .github/workflows/
-skills/gha-agent/scripts/gha-agent.sh:50:    for f in $CHANGED_FILES; do
-skills/gha-agent/scripts/gha-agent.sh:87:  if [[ -z "${CHANGED_FILES:-}" ]] && [[ ! -d ".github/workflows" ]]; then
-skills/gha-agent/scripts/gha-agent.sh:89:    echo "Result: SKIP (no .github/workflows/ directory found)"
-skills/gha-agent/scripts/gha-agent.sh:94:  # CHANGED_FILES set but no workflow files matched
-skills/gha-agent/scripts/gha-agent.sh:95:  if [[ -n "${CHANGED_FILES:-}" ]] && [[ -z "$WORKFLOW_FILES" ]]; then
-skills/gha-agent/scripts/gha-agent.sh:97:    echo "Result: SKIP (no workflow files in CHANGED_FILES)"
-skills/gha-agent/scripts/gha-agent.sh:105:    echo "Result: SKIP (no .yml/.yaml files in .github/workflows/)"
-skills/helm-agent/scripts/helm-agent.sh:39:  CHANGED_FILES="a.yaml b.tpl"  Scope to charts containing these files
-skills/helm-agent/scripts/helm-agent.sh:83:  # Priority 2: derive chart roots from CHANGED_FILES
-skills/helm-agent/scripts/helm-agent.sh:84:  if [[ -n "${CHANGED_FILES:-}" ]]; then
-skills/helm-agent/scripts/helm-agent.sh:87:    for f in $CHANGED_FILES; do
-skills/helm-agent/scripts/helm-agent.sh:113:      echo "Discovered ${count} chart(s) from CHANGED_FILES"
-skills/helm-agent/scripts/helm-agent.sh:115:      echo "CHANGED_FILES set but no chart-related files found"
-skills/helm-agent/scripts/helm-agent.sh:151:    echo "Result: SKIP (no charts discovered)"
-skills/helm-agent/scripts/helm-agent.sh:181:    echo "Result: SKIP (no charts discovered)"
-skills/bash-agent/scripts/bash-agent.sh:39:  CHANGED_FILES="a.sh b.sh"  Scope to specific files
-skills/bash-agent/scripts/bash-agent.sh:52:  if [[ -n "${CHANGED_FILES:-}" ]]; then
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh docker-agent' in /Users/chrisraethke/projects/x-agent succeeded in 213ms:
+PASS   docker-agent issues
+PASS   docker-agent no-dockerfiles skip
+PASS   docker-agent scoped-match
+PASS   docker-agent scoped-no-match
+------
+Scenarios run: 5
+Failures: 0
+exec
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 79ms:
+
 codex
-I need to close the required `ralph validate review` gate, then I’ll write the formal review result file and only note minor feedback if anything remains. I’m also applying the required review-logging step.
+I confirmed targeted docker-agent fixtures pass with current environment. I’ll do a quick shellcheck command plus `ralph validate review` after writing the review file, since the validator explicitly requires that artifact to exist before it can pass.
 exec
-/bin/zsh -lc 'ls .ralph' in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-README.md
-automation-opportunities.md
-commit.md
-exploration.md
-history
-lessons.jsonl
-plan-agent.log
-ralph-actions.jsonl
-ralph-state.json
-ralph.lock
-ralph.log
-review-agent.log
-specs
-task.md
-work-agent.log
-work-plan.txt
-work-summary.txt
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh shellcheck' in /Users/chrisraethke/projects/x-agent succeeded in 934ms:
+PASS   shellcheck
+------
+Scenarios run: 1
+Failures: 0
+codex
+I spotted one likely review-level gap around test coverage for the build-check command path (especially when docker is missing). I’ll capture that with precise locations and then finalize the review artifact.
 exec
-/bin/zsh -lc "sed -n '1,260p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc 'nl -ba tests/docker-agent/*.env 2>/dev/null || true' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba skills/docker-agent/scripts/docker-agent.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+zsh:1: no matches found: tests/docker-agent/*.env
+ succeeded in 53ms:
+     1	#!/usr/bin/env bash
+     2	set -euo pipefail
+     3	
+     4	# docker-agent: lean Dockerfile linter for coding agents
+     5	# deps: hadolint (required), docker (optional, for build-check)
+     6	
+     7	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+     8	LIB_DIR="${SCRIPT_DIR}/../../../lib"
+     9	# shellcheck source=../../../lib/x-agent-common.sh
+    10	source "${LIB_DIR}/x-agent-common.sh"
+    11	
+    12	# ---- Agent-specific knobs ------------------------------------------------
+    13	
+    14	RUN_LINT="${RUN_LINT:-1}"
+    15	RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
+    16	
+    17	# ---- Usage ----------------------------------------------------------------
+    18	
+    19	usage() {
+    20	  cat <<'EOF'
+exec
+/bin/zsh -lc 'date -u +%Y-%m-%dT%H:%M:%SZ' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+2026-03-08T18:31:51Z
+codex
+I’m finalizing the review output next, and I’ll also append one automation-learning entry since the test-coverage gap we found is repetitive enough to be enforceable for future runs.
+exec
+/bin/zsh -lc "sed -n '1,220p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' .ralph/ralph-actions.jsonl" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 # Automation Opportunities for x-agent
 
 ## [2026-03-08T16:59:00Z] output-parity-diff
@@ -1450,39 +1362,35 @@ exec
 
 **Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
 
+ succeeded in 52ms:
+Total output lines: 220
+
+{"timestamp":"2026-03-08T16:52:32.668458+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md"}}
+{"timestamp":"2026-03-08T16:52:33.158791+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt"}}
+{"timestamp":"2026-03-08T16:52:38.252923+00:00","agent":"claude","type":"Other","target":"-","status":"started","tool":"Agent","parameters":{"description":"Read existing agent scripts","prompt":"Read the following files and return their FULL contents:\n1. skills/npm-agent/scripts/npm-agent.sh\n2. skills/cargo-agent/scripts/cargo-agent.sh  \n3. skills/terra-agent/scripts/terra-agent.sh\n4. install.sh\n\nReturn the complete file contents for each.","subagent_type":"Explore"}}
+{"timestamp":"2026-03-08T16:52:39.744187+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
+{"timestamp":"2026-03-08T16:52:39.915235+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
+{"timestamp":"2026-03-08T16:52:40.116494+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh"}}
+{"timestamp":"2026-03-08T16:52:40.248144+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
+{"timestamp":"2026-03-08T16:52:54.989413+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
+{"timestamp":"2026-03-08T16:52:55.559101+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
+{"timestamp":"2026-03-08T16:52:55.727818+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
+{"timestamp":"2026-03-08T16:53:02.916477+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","limit":70}}
+{"timestamp":"2026-03-08T16:53:03.371949+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/tests/","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/tests/","description":"List test directory"}}
+{"timestamp":"2026-03-08T16:53:04.410683+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","description":"Check if lib dir exists"}}
+{"timestamp":"2026-03-08T16:53:10.310457+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh"}}
+{"timestamp":"2026-03-08T16:53:41.392208+00:00","agent":"claude","type":"BashExec","target":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","status":"started","tool":"Bash","parameters":{"command":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","description":"Create lib directory"}}
+{"timestamp":"2026-03-08T16:54:17.418890+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh","status":"started","tool":"Write","parameters":{"content":"#!/usr/bin/env bash\n# x-agent-common.sh — shared boilerplate for x-agent workflow runners.\n# Source this file from agent scripts; it produces no output or side effects.\n# Bash 3.2 compatible.\n\n# ---------------------------------------------------------------------------\n# Environment defaults (agent can override after sourcing)\n# ---------------------------------------------------------------------------\n\nKEEP_DIR=\"${KEEP_DIR:-0}\"\nFAIL_FAST=\"${FAIL_FAST:-0}\"\nCHANGED_FILES=\"${CHANGED_FILES:-}\"\nTMPDIR_ROOT=\"${TMPDIR_ROOT:-/tmp}\"\n\n# CI-aware MAX_LINES: unlimited in CI, concise locally.\nif [[ \"${CI:-}\" == \"true\" || \"${CI:-}\" == \"1\" ]]; then\n  MAX_LINES=\"${MAX_LINES:-999999}\"\nelse\n  MAX_LINES=\"${MAX_LINES:-40}\"\nfi\n\n# ---------------------------------------------------------------------------\n# Output helpers\n# ---------------------------------------------------------------------------\n\nhr() { echo \"------------------------------------------------------------\"; }\n\nSTEP_START_SECONDS=0\n\nstep() {\n  local name=\"$1\"\n  STEP_START_SECONDS=$SECONDS\n  hr\n  echo \"Step: $name\"\n}\n\nfmt_elapsed() {\n  local elapsed=$(( SECONDS - STEP_START_SECONDS ))\n  echo \"Time: ${elapsed}s\"\n}\n\n# ---------------------------------------------------------------------------\n# Flow control\n# ---------------------------------------------------------------------------\n\n# Returns 0 (continue) unless fail-fast is on and a step already failed.\n# Caller must declare `overall_ok` before use.\nshould_continue() { [[ \"$FAIL_FAST\" != \"1\" || \"$overall_ok\" == \"1\" ]]; }\n\n# ---------------------------------------------------------------------------\n# Dependency checking\n# ---------------------------------------------------------------------------\n\nneed() {\n  command -v \"$1\" >/dev/null 2>&1 || { echo \"Missing required tool: $1\" >&2; exit 2; }\n}\n\n# ---------------------------------------------------------------------------\n# Setup helpers (called explicitly by agents, not auto-executed)\n# ---------------------------------------------------------------------------\n\n# Create a temp output directory and install a cleanup trap.\n# Usage: setup_outdir <agent-name>\n# Sets: OUTDIR\nsetup_outdir() {\n  local agent_name=\"$1\"\n  OUTDIR=\"$(mktemp -d \"${TMPDIR_ROOT%/}/${agent_name}.XXXXXX\")\"\n\n  # Define the cleanup function inside setup_outdir so it captures OUTDIR.\n  _xagent_cleanup() {\n    local code=\"$?\"\n    if [[ \"${KEEP_DIR:-0}\" == \"1\" || \"$code\" != \"0\" ]]; then\n      echo \"Logs kept in: $OUTDIR\"\n    else\n      rm -rf \"$OUTDIR\"\n    fi\n    exit \"$code\"\n  }\n\n  trap _xagent_cleanup EXIT\n}\n\n# Acquire a workflow lock to prevent concurrent agent runs.\n# Usage: setup_lock <agent-name>\nsetup_lock() {\n  local agent_name=\"$1\"\n  local lockfile=\"${TMPDIR_ROOT%/}/${agent_name}.lock\"\n\n  # Open fd 9 for locking.\n  exec 9>\"$lockfile\"\n\n  if command -v flock >/dev/null 2>&1; then\n    if ! flock -n 9; then\n      echo \"${agent_name}: waiting for another run to finish...\"\n      flock 9\n    fi\n  elif command -v perl >/dev/null 2>&1; then\n    # macOS: flock not available, use perl as a portable fallback.\n    perl -e '\n      use Fcntl \":flock\";\n      open(my $fh, \">&=\", 9) or die \"fdopen: $!\";\n      if (!flock($fh, LOCK_EX | LOCK_NB)) {\n        print STDERR \"'\"${agent_name}\"': waiting for another run to finish...\\n\";\n        flock($fh, LOCK_EX) or die \"flock: $!\";\n      }\n    '\n  else\n    echo \"Warning: neither flock nor perl available; skipping workflow lock\" >&2\n  fi\n}\n\n# ---------------------------------------------------------------------------\n# Result formatting\n# ---------------------------------------------------------------------------\n\n# Print a step result with optional fix hint.\n# Usage: print_result <ok> <log_path> [fix_hint]\n#   ok: \"1\" for pass, \"0\" for fail\n#   log_path: path to the full log file\n#   fix_hint: text shown only on failure (optional but expected on FAIL)\nprint_result() {\n  local ok=\"$1\"\n  local log_path=\"$2\"\n  local fix_hint=\"${3:-}\"\n\n  echo\n  if [[ \"$ok\" == \"1\" ]]; then\n    echo \"Result: PASS\"\n  else\n    echo \"Result: FAIL\"\n    if [[ -n \"$fix_hint\" ]]; then\n      echo \"Fix: $fix_hint\"\n    fi\n  fi\n  echo \"Full log: $log_path\"\n  fmt_elapsed\n}\n\n# Print the final overall summary.\n# Usage: print_overall <overall_ok>\n#   overall_ok: \"1\" for pass, \"0\" for fail\n# The caller should exit with the appropriate code after calling this.\nprint_overall() {\n  local overall_ok=\"$1\"\n  hr\n  if [[ \"$overall_ok\" == \"1\" ]]; then\n    echo \"Overall: PASS\"\n  else\n    echo \"Overall: FAIL\"\n  fi\n  echo \"Logs: $OUTDIR\"\n}\n","file_path":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh"}}
+{"timestamp":"2026-03-08T16:54:21.091877+00:00","agent":"claude","type":"BashExec","target":"shellcheck --severity=warning lib/x-agent-common.sh","status":"started","tool":"Bash","parameters":{"command":"shellcheck --severity=warning lib/x-agent-common.sh","description":"Shellcheck the shared library"}}
+{"timestamp":"2026-03-08T16:54:22.422852+00:00","agent":"claude","type":"BashExec","target":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","status":"started","tool":"Bash","parameters":{"command":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","description":"Test sourcing produces no output"}}
 exec
-/bin/zsh -lc 'tail -n 20 .ralph/ralph-actions.jsonl' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-{"timestamp":"2026-03-08T18:19:38.531721+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh"}}
-{"timestamp":"2026-03-08T18:19:45.280372+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh","status":"started","tool":"Write","parameters":{"content":"#!/usr/bin/env bash\nset -euo pipefail\n\n# Wrapper that hides kubeconform from PATH so kube-agent falls back to kubeval.\n# Used by kubeval-* test fixtures to exercise the fallback branch (FR-6).\n#\n# Instead of removing entire PATH directories (which drops co-located tools\n# like kubeval), this creates shadow directories with symlinks to everything\n# EXCEPT kubeconform.\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nAGENT_SCRIPT=\"${SCRIPT_DIR}/../../skills/kube-agent/scripts/kube-agent.sh\"\n\nSHADOW_ROOT=\"$(mktemp -d)\"\ncleanup() { rm -rf \"$SHADOW_ROOT\"; }\ntrap cleanup EXIT\n\nNEW_PATH=\"\"\nIFS=':'\nfor dir in $PATH; do\n  if [[ -x \"${dir}/kubeconform\" ]]; then\n    # Create a shadow directory with symlinks to all binaries except kubeconform\n    safe_name=\"$(echo \"$dir\" | tr '/' '_')\"\n    shadow=\"${SHADOW_ROOT}/${safe_name}\"\n    mkdir -p \"$shadow\"\n    for bin in \"$dir\"/*; do\n      [[ -e \"$bin\" ]] || continue\n      bn=\"$(basename \"$bin\")\"\n      [[ \"$bn\" == \"kubeconform\" ]] && continue\n      ln -sf \"$bin\" \"$shadow/$bn\" 2>/dev/null || true\n    done\n    dir=\"$shadow\"\n  fi\n  if [[ -z \"$NEW_PATH\" ]]; then\n    NEW_PATH=\"$dir\"\n  else\n    NEW_PATH=\"${NEW_PATH}:${dir}\"\n  fi\ndone\nunset IFS\n\nexport PATH=\"$NEW_PATH\"\n\nexec \"$AGENT_SCRIPT\" \"$@\"\n","file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh"}}
-{"timestamp":"2026-03-08T18:19:49.870406+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/skills/kube-agent/SKILL.md","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/kube-agent/SKILL.md","new_string":"  - Bash(KUBE_SCHEMAS_DIR=* scripts/kube-agent.sh*)\n  - Bash(KUBE_IGNORE_MISSING_SCHEMAS=* scripts/kube-agent.sh*)","old_string":"  - Bash(KUBE_SCHEMAS_DIR=* scripts/kube-agent.sh*)","replace_all":false}}
-{"timestamp":"2026-03-08T18:19:54.711937+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/skills/kube-agent/SKILL.md","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/kube-agent/SKILL.md","new_string":"| `KUBE_SCHEMAS_DIR` | _(empty)_ | Custom schema location for validator |\n| `KUBE_IGNORE_MISSING_SCHEMAS` | `0` | Set to `1` to skip resources with missing schemas (useful for CRDs, offline) |","old_string":"| `KUBE_SCHEMAS_DIR` | _(empty)_ | Custom schema location for validator |","replace_all":false}}
-{"timestamp":"2026-03-08T18:19:59.426383+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env","new_string":"SCENARIO_NAME=\"kube-agent kubeval-clean\"\nAGENT_SCRIPT=\"tests/kube-agent/run-with-kubeval.sh\"\nRUN_ARGS=\"all\"\nEXPECT_EXIT=0\nREQUIRED_TOOLS=\"kubeval\"\nexport KUBE_IGNORE_MISSING_SCHEMAS=1","old_string":"SCENARIO_NAME=\"kube-agent kubeval-clean\"\nAGENT_SCRIPT=\"tests/kube-agent/run-with-kubeval.sh\"\nRUN_ARGS=\"all\"\nEXPECT_EXIT=0\nREQUIRED_TOOLS=\"kubeval\"","replace_all":false}}
-{"timestamp":"2026-03-08T18:20:04.595046+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env"}}
-{"timestamp":"2026-03-08T18:20:04.694367+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/scenario.env","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/scenario.env"}}
-{"timestamp":"2026-03-08T18:20:09.600829+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-clean/scenario.env","new_string":"REQUIRED_TOOLS=\"kubeval\"\nexport KUBE_IGNORE_MISSING_SCHEMAS=1","old_string":"REQUIRED_TOOLS=\"kubeval\"","replace_all":false}}
-{"timestamp":"2026-03-08T18:20:10.489230+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/scenario.env","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/scenario.env","new_string":"REQUIRED_TOOLS=\"kubeval\"\nexport KUBE_IGNORE_MISSING_SCHEMAS=1","old_string":"REQUIRED_TOOLS=\"kubeval\"","replace_all":false}}
-{"timestamp":"2026-03-08T18:20:14.408291+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/bad-deployment.yaml","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/bad-deployment.yaml"}}
-{"timestamp":"2026-03-08T18:20:18.515036+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/bad-deployment.yaml","status":"started","tool":"Write","parameters":{"content":"apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: test\nspec:\n  replicas: \"not-a-number\"\n  selector:\n    matchLabels:\n      app: test\n  template:\n    spec:\n      containers:\n      - name: app\n        ports:\n        - containerPort: [invalid\n","file_path":"/Users/chrisraethke/projects/x-agent/tests/kube-agent/kubeval-issues/bad-deployment.yaml"}}
-{"timestamp":"2026-03-08T18:20:23.515250+00:00","agent":"claude","type":"BashExec","target":"shellcheck --severity=warning /Users/chrisraethke/projects/x-agent/skills/kube-agent/scripts/kube-agent.sh /Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh 2>&1","status":"started","tool":"Bash","parameters":{"command":"shellcheck --severity=warning /Users/chrisraethke/projects/x-agent/skills/kube-agent/scripts/kube-agent.sh /Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh 2>&1","description":"Shellcheck kube-agent scripts"}}
-{"timestamp":"2026-03-08T18:20:27.830178+00:00","agent":"claude","type":"BashExec","target":"tests/run-scenarios.sh kube-agent 2>&1","status":"started","tool":"Bash","parameters":{"command":"tests/run-scenarios.sh kube-agent 2>&1","description":"Run kube-agent scenario tests","timeout":120000}}
-{"timestamp":"2026-03-08T18:20:37.064432+00:00","agent":"claude","type":"BashExec","target":"tests/run-scenarios.sh 2>&1","status":"started","tool":"Bash","parameters":{"command":"tests/run-scenarios.sh 2>&1","description":"Run full scenario test suite","timeout":180000}}
-{"timestamp":"2026-03-08T18:21:18.740897+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md"}}
-{"timestamp":"2026-03-08T18:21:23.679715+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","new_string":"- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh`: wrapper that hides kubeconform from PATH using shadow directories (preserves co-located kubeval) for kubeval fallback testing.","old_string":"- `/Users/chrisraethke/projects/x-agent/tests/kube-agent/run-with-kubeval.sh`: wrapper that removes kubeconform from PATH for kubeval fallback testing.","replace_all":false}}
-{"timestamp":"2026-03-08T18:21:29.478832+00:00","agent":"claude","type":"FileEdit","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Edit","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","new_string":"- `CHANGED_FILES` is optional and used only where meaningful; if non-empty, logic narrows execution targets.\n- `KUBE_IGNORE_MISSING_SCHEMAS=1` enables offline-safe validation by skipping resources whose schemas can't be fetched; all kube-agent test fixtures use this knob for network independence.","old_string":"- `CHANGED_FILES` is optional and used only where meaningful; if non-empty, logic narrows execution targets.","replace_all":false}}
-{"timestamp":"2026-03-08T18:21:58.148740+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-summary.txt","status":"started","tool":"Write","parameters":{"content":"# Work Summary — Spec 07: kube-agent (REWORK iteration 3)\n\n## What was implemented\n\nAddressed all remaining review feedback from iteration 26. Two targeted fixes:\n\n### R-008: Network-independent test fixtures\n- Added `KUBE_IGNORE_MISSING_SCHEMAS` env knob to `skills/kube-agent/scripts/kube-agent.sh` (default: 0). When set to 1, adds `-ignore-missing-schemas` to kubeconform and `--ignore-missing-schemas` to kubeval.\n- Updated ALL kubeconform/kubeval test fixtures (`clean`, `issues`, `scoped-match`, `schema-dir`, `kubeval-clean`, `kubeval-issues`) to `export KUBE_IGNORE_MISSING_SCHEMAS=1`.\n- Changed `issues` and `kubeval-issues` fixture manifests to contain YAML parse errors (`containerPort: [invalid`) which kubeconform/kubeval detect regardless of schema availability. This ensures EXPECT_EXIT=1 works even when schemas can't be fetched.\n- Updated `usage()` help text in kube-agent.sh to document the new knob.\n- Updated SKILL.md allowed-tools and environment knobs table.\n\n### R-011: kubeval wrapper preserves co-located binaries\n- Rewrote `tests/kube-agent/run-with-kubeval.sh` to use shadow directories with selective symlinks instead of dropping entire PATH directories. When a PATH directory contains kubeconform, a shadow directory is created with symlinks to ALL binaries except kubeconform. This preserves kubeval (and any other tools) when co-located with kubeconform.\n- Shadow directories are created in a temp dir with cleanup trap.\n\n## Deviations from work plan\n\nNone — changes align with existing checklist items (steps 6, 8, 11, 12, 13, 16).\n\n## Edge cases handled\n- YAML parse errors are detected by kubeconform without network or schema access\n- Shadow directory approach preserves all non-kubeconform binaries including kubeval\n- Cleanup trap ensures shadow temp dirs are removed on exit\n- `KUBE_IGNORE_MISSING_SCHEMAS` works for both kubeconform and kubeval branches\n\n## Tests written/run\n- All 9 kube-agent scenarios pass (7 PASS, 2 SKIP for missing kubeval)\n- Full suite: 30 scenarios, 0 failures\n- shellcheck --severity=warning passes on all modified scripts\n\n## Known limitations\n- kubeval fixtures still skipped in this environment (kubeval not installed)\n- KUBE_IGNORE_MISSING_SCHEMAS changes validation behavior (skips CRDs without schemas); this is documented and off by default\n\n## Feedback Closure Matrix\n- [R-008] RESOLVED: Added KUBE_IGNORE_MISSING_SCHEMAS knob (skills/kube-agent/scripts/kube-agent.sh:16,153,165) and applied to all test fixtures. Issues fixtures use YAML parse errors for network-independent failure detection.\n- [R-011] RESOLVED: Rewrote tests/kube-agent/run-with-kubeval.sh to use shadow directories with selective symlinks, preserving kubeval when co-located with kubeconform.\n- [R-012] RESOLVED: Shadow directory approach in run-with-kubeval.sh handles co-location by symlinking all binaries except kubeconform.\n- [R-013] RESOLVED: kubeval-clean and kubeval-issues fixtures will automatically exercise fallback path when kubeval is installed; wrapper preserves kubeval regardless of co-location.\n- [R-014] RESOLVED: schema-dir fixture now uses KUBE_IGNORE_MISSING_SCHEMAS=1 for deterministic behavior. KUBE_SCHEMAS_DIR=\"default\" passthrough is verified by exit-code assertion.\n\n## Exploration notes\nUpdated `.ralph/exploration.md`:\n- Updated run-with-kubeval.sh description to reflect shadow directory approach\n- Added note about KUBE_IGNORE_MISSING_SCHEMAS knob in patterns section\n\n## Lessons Applied This Phase\n- Used `export` for scenario.env vars (learned in previous iteration) — applied to KUBE_IGNORE_MISSING_SCHEMAS\n- YAML parse errors are validator-independent failure mode — kubeconform exits non-zero for malformed YAML regardless of schema availability or -ignore-missing-schemas flag\n\n## Suggestions for the REVIEW agent\n- R-008 is fully resolved: kubeconform fixtures use -ignore-missing-schemas + YAML parse errors for deterministic offline behavior\n- R-011 is fully resolved: shadow directory approach preserves all co-located binaries\n- kubeval fixtures still show SKIP when kubeval is not installed — this is expected behavior\n- The KUBE_IGNORE_MISSING_SCHEMAS knob is a legitimate user-facing feature for CRD-heavy repos, not just a test hack\n","file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-summary.txt"}}
-{"timestamp":"2026-03-08T18:22:02.363029+00:00","agent":"claude","type":"BashExec","target":"ralph validate work 2>&1","status":"started","tool":"Bash","parameters":{"command":"ralph validate work 2>&1","description":"Run ralph validate work","timeout":120000}}
-{"timestamp":"2026-03-08T18:22:10.258811+00:00","agent":"codex","type":"Other","target":"-","status":"started","tool":"kubeconform"}
-exec
-/bin/zsh -lc 'ls .ralph/review-result.txt' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
-ls: .ralph/review-result.txt: No such file or directory
-exec
-/bin/zsh -lc "cat > .ralph/review-result.txt <<'EOF'
+/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt <<'EOF'
 DECISION: SHIP
-ITERATION: 3
-SPEC: 07-kube-agent.md
+ITERATION: 4
+SPEC: 08-docker-agent.md
 
 SUMMARY:
-Spec implementation is largely complete and coherent. Previously raised R-008 and R-011 issues are addressed: the kubeconform-only path is made network-independent via "'`KUBE_IGNORE_MISSING_SCHEMAS` + fixture parse errors, and the kubeval fallback fixture wrapper now removes only `kubeconform` from PATH while preserving co-located binaries.
+Implementation is mostly complete and matches the docker-agent acceptance criteria. Core behavior is correct, integration points are updated, and targeted validation checks show the new fixtures and shellcheck pass.
 
 BLOCKERS:
 None
@@ -1491,64 +1399,96 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-None
+1. [tests/docker-agent] No dedicated scenario explicitly exercises the "'`build-check` command path or validates the `SKIP (docker not found)` branch; coverage currently proves lint/scoping behavior but does not directly assert command-level output semantics for the new optional step. Add `tests/docker-agent/build-check-skip/` with `RUN_ARGS="build-check"` and `RUN_BUILD_CHECK=1` so this behavior is locked in.
+2. [skills/docker-agent/scripts/docker-agent.sh:191] The build-check command is not tested in suite coverage when `RUN_BUILD_CHECK=1`; if `docker` is present, the current suite still validates only lint + skip-default behavior. Add a command-targeted fixture to prevent regressions in command dispatch semantics.
 
 NEXT STEPS:
 Proceed to next spec
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
+codex
+I’ve written the review artifact; now I’ll run `ralph validate review` to confirm the required format/gating checks pass and then append the insight log entries.
 exec
-/bin/zsh -lc 'ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ"); cat >> .ralph/ralph-actions.jsonl <<EOF
-{"timestamp":"$ts","action":"lesson_applied","lesson_id":"scenario-env-exports","context":"Reviewed kube-agent scenario runner behavior and fixture env passing","prevented":"Subprocess scenarios silently ignoring non-exported env vars (e.g., CHANGED_FILES/KUBE_SCHEMAS_DIR) and masking scope/schema behavior changes."}
-EOF
-printf '"'
-## ['\""'$ts"'"'] scenario-env-exports
-
-**Frequency**: Repeated across scope-aware agents in scenario-based harness
-**Priority**: MEDIUM
-**Current Issue**: Agent fixtures can set variables like CHANGED_FILES or schema knobs without "'`export`, so subprocess-invoked agents never read them, weakening scoped/optional behavior assertions.
-**Manual Check**: Inspect each agent fixture `scenario.env` for variables read by the agent and verify they are exported when required by harness subprocess execution.
-**Automated Check**: Add a lint/preflight that parses `scenario.env` files for known agent env vars (for example CHANGED_FILES, KUBE_SCHEMAS_DIR, KUBE_IGNORE_MISSING_SCHEMAS) and warns when set without `export`.
-**Status**: PENDING
-'"' >> .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-exec
-/bin/zsh -lc 'ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ralph validate review
 ----------------------------------------
   PASS: review-result.txt contains decision: DECISION: SHIP
 ----------------------------------------
 RESULT: PASS
+exec
+/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl <<'EOF'
+{\"timestamp\":\"2026-03-08T18:31:51Z\",\"action\":\"lesson_applied\",\"lesson_id\":\"docker-agent-build-check-coverage\",\"context\":\"Docker agent review found no fixture-level assertion for "'`build-check` command path or explicit docker-missing skip branch","prevented":"Regression risk that optional step semantics or command dispatch become untested despite passing lint-only scenarios"}
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+
+exec
+/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md <<'EOF'
+
+## [2026-03-08T18:31:51Z] scoped-agent-build-check-command-coverage
+
+**Frequency**: Repeated across scoped agents with optional command-specific steps
+
+**Priority**: MEDIUM
+
+**Current Issue**: New agent acceptance relies heavily on fixture exit-code checks, but optional commands (like "'`build-check`) can remain untested at command level, allowing regressions in dispatch and skip semantics.
+
+**Manual Check**: Verify there is at least one fixture explicitly invoking each supported command and expected skip/fail branch.
+
+**Automated Check**: Extend scenario validation to require a command-matrix fixture when a spec lists multiple commands, including at least one run per command plus expected `Result:` reason checks.
+
+**Status**: PENDING
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+exec
+/bin/zsh -lc 'cat /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+DECISION: SHIP
+ITERATION: 4
+SPEC: 08-docker-agent.md
+
+SUMMARY:
+Implementation is mostly complete and matches the docker-agent acceptance criteria. Core behavior is correct, integration points are updated, and targeted validation checks show the new fixtures and shellcheck pass.
+
+BLOCKERS:
+None
+
+MAJOR ISSUES:
+None
+
+MINOR ISSUES:
+1. [tests/docker-agent] No dedicated scenario explicitly exercises the `build-check` command path or validates the `SKIP (docker not found)` branch; coverage currently proves lint/scoping behavior but does not directly assert command-level output semantics for the new optional step. Add `tests/docker-agent/build-check-skip/` with `RUN_ARGS="build-check"` and `RUN_BUILD_CHECK=1` so this behavior is locked in.
+2. [skills/docker-agent/scripts/docker-agent.sh:191] The build-check command is not tested in suite coverage when `RUN_BUILD_CHECK=1`; if `docker` is present, the current suite still validates only lint + skip-default behavior. Add a command-targeted fixture to prevent regressions in command dispatch semantics.
+
+NEXT STEPS:
+Proceed to next spec
 codex
-`ralph validate review` is PASS.  
-Created `.ralph/review-result.txt` with:
+SHIP written to [`.ralph/review-result.txt`](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt).
 
-- `DECISION: SHIP`
-- `ITERATION: 3`
-- `SPEC: 07-kube-agent.md`
+Validation run:
+- `ralph validate review` → `PASS`
+- `tests/run-scenarios.sh docker-agent` → `PASS` (5/5)
+- `tests/run-scenarios.sh shellcheck` → `PASS`
+- `shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh` → `PASS`
 
-[.ralph/review-result.txt](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt)
+Minor issues (non-blocking):
+1. No dedicated scenario currently asserts `docker-agent build-check` command behavior directly, especially `SKIP (docker not found)` (`[tests/docker-agent/... ]` coverage gap).
+2. Command-level command dispatch for `build-check` is untested in scenario suite when `RUN_BUILD_CHECK=1` (`[skills/docker-agent/scripts/docker-agent.sh:211]`).
 
-Previous rework issues are resolved per review summary:
-- R-008: network-independent fixtures via `KUBE_IGNORE_MISSING_SCHEMAS` and YAML parse-failure fixtures
-- R-011/R-012: kubeval fallback wrapper now preserves co-located binaries by selective PATH shadowing
-- R-013/R-014: fallback and schema-dir scenarios are covered and deterministic under current fixture design
-
-Proceed to next spec.
+Logged review insight for future automation:
+- appended `.ralph/ralph-actions.jsonl`
+- appended `.ralph/automation-opportunities.md`
 tokens used
-68,006
-`ralph validate review` is PASS.  
-Created `.ralph/review-result.txt` with:
+72,636
+SHIP written to [`.ralph/review-result.txt`](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt).
 
-- `DECISION: SHIP`
-- `ITERATION: 3`
-- `SPEC: 07-kube-agent.md`
+Validation run:
+- `ralph validate review` → `PASS`
+- `tests/run-scenarios.sh docker-agent` → `PASS` (5/5)
+- `tests/run-scenarios.sh shellcheck` → `PASS`
+- `shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh` → `PASS`
 
-[.ralph/review-result.txt](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt)
+Minor issues (non-blocking):
+1. No dedicated scenario currently asserts `docker-agent build-check` command behavior directly, especially `SKIP (docker not found)` (`[tests/docker-agent/... ]` coverage gap).
+2. Command-level command dispatch for `build-check` is untested in scenario suite when `RUN_BUILD_CHECK=1` (`[skills/docker-agent/scripts/docker-agent.sh:211]`).
 
-Previous rework issues are resolved per review summary:
-- R-008: network-independent fixtures via `KUBE_IGNORE_MISSING_SCHEMAS` and YAML parse-failure fixtures
-- R-011/R-012: kubeval fallback wrapper now preserves co-located binaries by selective PATH shadowing
-- R-013/R-014: fallback and schema-dir scenarios are covered and deterministic under current fixture design
-
-Proceed to next spec.
+Logged review insight for future automation:
+- appended `.ralph/ralph-actions.jsonl`
+- appended `.ralph/automation-opportunities.md`

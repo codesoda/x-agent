@@ -18,7 +18,6 @@
   - `go-agent`: optional build mode + package-scoped execution.
   - `helm-agent`: multi-command command dispatcher + command-specific failures.
   - `kube-agent`: validator fallback detection + CHANGED_FILES scoping + skip/fail behavior.
-  - `docker-agent`: Dockerfile discovery (find-based) + hadolint lint + opt-in BuildKit build-check.
   - `npm-agent` and `terra-agent`: mature examples of required-tool handling and CI-aware behavior.
 - `/Users/chrisraethke/projects/x-agent/tests/*-agent/*`: fixture directories for scenario-based validation.
   - Current pattern includes `clean/` and `issues/` plus scoped fixtures when behavior depends on `CHANGED_FILES`.
