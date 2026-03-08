@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="cargo-agent npm-agent terra-agent"
+SKILLS="cargo-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -285,6 +285,22 @@ check_optional_deps() {
     fi
   fi
 
+  if skill_selected "py-agent"; then
+    if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+      info "  Found: python"
+    else
+      warn "  Missing: python3 (needed by py-agent)"
+      all_ok=0
+    fi
+
+    for dep in ruff black; do
+      if command -v "$dep" >/dev/null 2>&1; then
+        info "  Found: ${dep}"
+        break
+      fi
+    done
+  fi
+
   if skill_selected "terra-agent"; then
     if command -v terraform >/dev/null 2>&1; then
       info "  Found: terraform"
@@ -323,6 +339,9 @@ print_agents_md_snippet() {
         ;;
       npm-agent)
         echo "- Node.js: use \`/npm-agent\` (format/lint/typecheck/test/build)."
+        ;;
+      py-agent)
+        echo "- Python: use \`/py-agent\` (format/lint/typecheck/test)."
         ;;
       terra-agent)
         echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/init/plan-safe/validate/lint)."
