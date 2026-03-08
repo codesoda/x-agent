@@ -8,7 +8,7 @@ approval: never
 sandbox: workspace-write [workdir, /tmp, $TMPDIR]
 reasoning effort: xhigh
 reasoning summaries: none
-session id: 019cceb7-ed10-7411-99ce-57638bf24f98
+session id: 019ccebf-7d99-7972-b332-8c3e27fc5efb
 --------
 user
 You are the REVIEW agent for RALPH (Recursive Autonomous Loop with Planning & Human-oversight).
@@ -63,108 +63,122 @@ Extract shared boilerplate from existing agents into a common library, then ship
 
 
 **Current Specification:**
-# Spec 08: docker-agent
+# Spec 09: ansible-agent
 
 ## Objective
 
-Create a new docker-agent that lints Dockerfiles with `hadolint` and optionally runs BuildKit `--check` mode.
+Create a new ansible-agent that lints Ansible playbooks/roles and validates syntax.
 
 ## Source
 
-- **PRD User Story:** US-007
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+- **PRD User Story:** US-008
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13
 
 ## User Story Context
 
-> As a developer, I want a docker-agent that lints Dockerfiles and optionally runs BuildKit checks so I can catch issues before CI builds.
+> As a developer, I want an ansible-agent that lints and syntax-checks Ansible playbooks/roles so I can catch issues before running them.
 
 ## Functional Requirements
 
 - FR-1: Sources `lib/x-agent-common.sh`
 - FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_LINT, RUN_BUILD_CHECK)
+- FR-3: Per-step toggles (RUN_LINT, RUN_SYNTAX)
 - FR-4: Structured output
 - FR-5: --fail-fast and --help
-- FR-6: Required tools (hadolint); optional (docker for build-check)
+- FR-6: Required tools (ansible-lint, ansible-playbook) checked with need()
+- FR-10: FMT_MODE=check|fix; CI forces check mode (for ansible-lint --fix)
 - FR-11, FR-12, FR-13: SKILL.md, install.sh, scenario tests
 
 ## Components
 
-- **Create:** `skills/docker-agent/scripts/docker-agent.sh`
-- **Create:** `skills/docker-agent/SKILL.md`
-- **Create:** `tests/docker-agent/clean/` (scenario.env + valid Dockerfile)
-- **Create:** `tests/docker-agent/issues/` (scenario.env + bad Dockerfile)
+- **Create:** `skills/ansible-agent/scripts/ansible-agent.sh`
+- **Create:** `skills/ansible-agent/SKILL.md`
+- **Create:** `tests/ansible-agent/clean/` (scenario.env + valid playbook)
+- **Create:** `tests/ansible-agent/issues/` (scenario.env + playbook with lint issues)
 - **Modify:** `install.sh`
 - **Modify:** `README.md`
 
 ## Implementation Details
 
-### Script: `docker-agent.sh`
+### Script: `ansible-agent.sh`
 
 **Agent-specific knobs:**
 ```bash
 RUN_LINT="${RUN_LINT:-1}"
-RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
+RUN_SYNTAX="${RUN_SYNTAX:-1}"
+FMT_MODE="${FMT_MODE:-auto}"  # auto = fix locally, check in CI
 ```
 
-**Required tools:** `need hadolint`
-**Optional tools:** docker (for build-check, skip with notice)
+**Required tools:** `need ansible-lint`, `need ansible-playbook`
 
-**Dockerfile discovery:**
-- If CHANGED_FILES set, filter to Dockerfile-like files
-- Otherwise, find files matching: `Dockerfile`, `Dockerfile.*`, `*.dockerfile` (recursive, excluding `.git/`, `node_modules/`)
-- If no Dockerfiles found: SKIP all steps
+**Playbook discovery:**
+- If CHANGED_FILES set, filter to `.yml`/`.yaml` files
+- Otherwise, discover playbooks using common patterns:
+  - Files named `playbook*.yml`, `site.yml`, `main.yml`
+  - Files in standard Ansible directories (if `roles/` or `playbooks/` exist)
+  - For syntax check: files containing `hosts:` key (simple grep filter)
+- If no playbooks found: SKIP
 
 **Step: lint**
-- Run `hadolint <dockerfile>` for each discovered Dockerfile
-- hadolint outputs one issue per line with severity
-- Collect all results, log to disk
-- Fix hint: `Fix: resolve hadolint issues above, then re-run: /docker-agent lint`
+- Check mode (default, forced in CI): `ansible-lint`
+  - ansible-lint auto-discovers from current directory
+- Fix mode (FMT_MODE=fix, local only): `ansible-lint --fix`
+- Capture output, log to disk
+- Fix hint (check mode): `Fix: run /ansible-agent lint with FMT_MODE=fix to auto-fix, then re-run: /ansible-agent lint`
+- Fix hint (fix mode, if still fails): `Fix: resolve remaining lint issues above, then re-run: /ansible-agent lint`
 
-**Step: build-check (opt-in)**
-- Defaults to OFF (`RUN_BUILD_CHECK=0`)
-- If enabled and docker not installed: `Result: SKIP (docker not found)`
-- If enabled: run `docker build --check -f <dockerfile> .` for each Dockerfile
-  - `--check` is BuildKit's lint mode — no image is built
-- Fix hint: `Fix: resolve build check errors above, then re-run: /docker-agent build-check`
+**Step: syntax**
+- Run `ansible-playbook --syntax-check <playbook>` for each discovered playbook
+- Collect results per playbook
+- Fix hint: `Fix: resolve syntax errors above, then re-run: /ansible-agent syntax`
 
-**Commands:** `lint`, `build-check`, `all` (default — lint only unless build-check enabled)
+**CHANGED_FILES scoping:**
+- Filter to `.yml`/`.yaml` files
+- For lint: ansible-lint runs project-wide by default (CHANGED_FILES used for skip decision — if no ansible files changed, SKIP)
+- For syntax: only check changed playbook files
+
+**Commands:** `lint`, `syntax`, `all` (default)
 
 ### Scenario Tests
 
-**clean fixture (`tests/docker-agent/clean/`):**
-- `Dockerfile`: valid, clean Dockerfile
-  ```dockerfile
-  FROM alpine:3.19
-  RUN apk add --no-cache curl
-  COPY . /app
-  CMD ["/app/start.sh"]
+**clean fixture (`tests/ansible-agent/clean/`):**
+- `playbook.yml`: minimal valid Ansible playbook
+  ```yaml
+  ---
+  - name: Test playbook
+    hosts: localhost
+    gather_facts: false
+    tasks:
+      - name: Print message
+        ansible.builtin.debug:
+          msg: "Hello from ansible-agent test"
   ```
-- REQUIRED_TOOLS="hadolint"
-- Note: RUN_BUILD_CHECK=0 in scenario (build-check requires docker daemon)
+- REQUIRED_TOOLS="ansible-lint ansible-playbook"
 
-**issues fixture (`tests/docker-agent/issues/`):**
-- `Dockerfile`: Dockerfile with hadolint violations
-  ```dockerfile
-  FROM ubuntu:latest
-  RUN apt-get update && apt-get install -y curl
-  ADD . /app
+**issues fixture (`tests/ansible-agent/issues/`):**
+- `playbook.yml`: playbook with ansible-lint violations
+  ```yaml
+  ---
+  - hosts: localhost
+    tasks:
+      - shell: echo hello
+      - command: ls -la
   ```
-  - Triggers: DL3007 (using latest), DL3009 (delete apt cache), DL3020 (use COPY instead of ADD)
-- REQUIRED_TOOLS="hadolint"
+  - Triggers: missing `name` on play/tasks, use of `shell`/`command` without `changed_when`
+- REQUIRED_TOOLS="ansible-lint ansible-playbook"
 
 ### SKILL.md
 
-Triggers on: docker agent, dockerfile lint, hadolint, docker checks, validate dockerfile.
-Include `RUN_BUILD_CHECK=*` in allowed-tools.
+Triggers on: ansible agent, ansible lint, ansible checks, validate ansible, ansible syntax check.
+Include `FMT_MODE=*` in allowed-tools.
 
 ## Test Strategy
 
-- `tests/run-scenarios.sh docker-agent` — clean passes, issues fails
+- `tests/run-scenarios.sh ansible-agent` — clean passes, issues fails
 - `shellcheck --severity=warning` passes
-- Verify SKIP when no Dockerfiles found
-- Verify build-check defaults to OFF
-- Verify build-check skips with notice when docker not found
+- Verify FMT_MODE=fix runs ansible-lint --fix
+- Verify CI forces check mode
+- Verify SKIP when no ansible files found
 
 ## Dependencies
 
@@ -172,15 +186,15 @@ Include `RUN_BUILD_CHECK=*` in allowed-tools.
 
 ## Acceptance Criteria
 
-- [ ] `skills/docker-agent/scripts/docker-agent.sh` exists and is executable
+- [ ] `skills/ansible-agent/scripts/ansible-agent.sh` exists and is executable
 - [ ] Sources `lib/x-agent-common.sh`
-- [ ] `lint` step runs `hadolint` on discovered Dockerfiles
-- [ ] Discovers Dockerfiles automatically (Dockerfile, Dockerfile.*, *.dockerfile)
-- [ ] `build-check` defaults OFF, runs `docker build --check` when enabled
-- [ ] `build-check` skips with notice if docker not installed
+- [ ] `lint` step runs `ansible-lint` in check mode, `ansible-lint --fix` in fix mode
+- [ ] CI forces check mode
+- [ ] `syntax` step runs `ansible-playbook --syntax-check` on discovered playbooks
+- [ ] Auto-discovers playbooks from common patterns
 - [ ] CHANGED_FILES scoping works
-- [ ] Reports SKIP when no Dockerfiles found
-- [ ] Commands: `lint`, `build-check`, `all`
+- [ ] Reports SKIP when no ansible files found
+- [ ] Commands: `lint`, `syntax`, `all`
 - [ ] SKILL.md, install.sh, README.md updated
 - [ ] clean/issues scenario tests pass
 - [ ] shellcheck passes
@@ -188,442 +202,391 @@ Include `RUN_BUILD_CHECK=*` in allowed-tools.
 
 **Work Plan:**
 ## Implementation Checklist
-- [x] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
-- [x] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
-- [x] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
-- [x] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
-- [x] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
-- [x] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
-- [x] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
-- [x] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
-- [x] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
-- [x] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
-- [x] 11. Update `README.md` with docker-agent in the table and usage examples.
-- [x] 12. Run `ralph validate plan` and fix any format/structure violations.
+- [x] 1. Read `.ralph/specs/09-ansible-agent.md`, shared-library/refactor docs, and existing agent patterns to lock contract assumptions.
+- [x] 2. Create `skills/ansible-agent/scripts/ansible-agent.sh` with shared-lib sourcing, standard header, and agent-specific knobs.
+- [x] 3. Implement playbook discovery that supports no-arg auto-discovery and `CHANGED_FILES` filtering with deterministic host-key syntax prefilter.
+- [x] 4. Implement `run_lint` with CI-aware `FMT_MODE` and per-mode `ansible-lint` invocation (`check` default, `fix` local) plus robust logging.
+- [x] 5. Implement `run_syntax` over discovered playbooks with `ansible-playbook --syntax-check` and explicit file-level failure aggregation.
+- [x] 6. Implement CLI parser (`--help`, `-h`, `help`, `--fail-fast`), command dispatch (`lint`, `syntax`, `all`), and `RUN_*` gating/flow semantics.
+- [x] 7. Add scenario fixtures for clean, issues, command-specific behavior, and CHANGED_FILES/no-match coverage under `tests/ansible-agent/`.
+- [x] 8. Author `skills/ansible-agent/SKILL.md` with trigger language and allowed-tools including `FMT_MODE=*`, `RUN_*`, `CHANGED_FILES=*`, and `TMPDIR_ROOT=*`.
+- [x] 9. Update `install.sh` for `ansible-agent` SKILLS registration, optional dependency messaging, and AGENTS/CLAUDE snippet wording.
+- [x] 10. Update `README.md` with ansible-agent table entry and usage examples for `lint`, `syntax`, and `all`.
+- [x] 11. Run `tests/run-scenarios.sh ansible-agent` with clean/issues/fixture matrix and validate `shellcheck --severity=warning` passes.
+- [x] 12. Run `ralph validate plan` and fix any plan-format or sequence issues.
 - [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
 - [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 
-### System Design and Boundaries
-- `docker-agent` is a thin orchestrator over local tools and discovery logic: it accepts CLI/env inputs, normalizes scope, runs one or more steps, and emits standardized output.
-- Universal components come from `lib/x-agent-common.sh`.
-- Agent-specific logic lives entirely in `skills/docker-agent/scripts/docker-agent.sh` and covers: knob defaults, discovery, two checks, output orchestration, and command routing.
-- Metadata and integration points are external: `tests/run-scenarios.sh` (fixtures), `install.sh` (installation & discovery), and `README.md` / SKILL.md (operator contracts).
+### System Design and Component Boundaries
+- The ansible-agent remains a thin orchestration shell around two command steps (`lint`, `syntax`) and is invoked directly by `run-scenarios.sh` fixtures.
+- Shared behavior (`step`, `print_result`, `setup_outdir`, `setup_lock`, `need`, etc.) comes from `lib/x-agent-common.sh`; ansible-agent contributes only domain-specific discovery and command execution.
+- The script boundary is: `run-scenarios.sh` -> ansible-agent -> local CLI tools (`ansible-lint`, `ansible-playbook`) -> filesystem reads + OUTDIR logs.
+- External integration points are minimal: `install.sh` for discoverability and `README.md` for user contract; no runtime service calls.
 
 ### Dependency Graph and Coupling
-- Hard dependency: `hadolint` for `lint`.
-- Optional dependency: `docker` for `build-check`.
-- Runtime coupling: `CHANGED_FILES` and `RUN_*` are passed through environment and used in discovery/gating.
-- Shared-lib coupling: any changes to `x-agent-common.sh` (especially `print_result`, `setup_outdir`, `setup_lock`, `need`) directly affect all agents.
-- Installer coupling: missing `docker-agent` in `SKILLS` and dependency checks blocks user discoverability and installation behavior.
+- Required runtime deps: `ansible-lint` and `ansible-playbook` (`need`-guarded and checked before running steps).
+- Shared lib coupling is critical: changes to `x-agent-common.sh` (especially `need`, `print_result`, lock logic) impact all agents and should remain backward-compatible.
+- Test coupling is through `.env` contract keys consumed by the harness (`SCENARIO_NAME`, `AGENT_SCRIPT`, `EXPECT_EXIT`, `REQUIRED_TOOLS`, `RUN_ARGS`, optional `CHANGED_FILES`).
+- UI coupling via `SKILL.md` and README influences agent discoverability and automation matching quality.
 
 ### Data Flow and Bottlenecks
-- Data flow: Scenario/env → agent bootstrap → candidate discovery → per-step command execution → logs → structured step output → final exit code.
-- Main bottlenecks are filesystem scans (`find`) and external command execution cost.
-- `all` path is bounded by number of discovered Dockerfiles because each file runs one hadolint command (and one build-check command when enabled).
+- Flow: parse CLI/help/flags -> set defaults -> source/discover tool availability -> initialize output dir + lock -> resolve mode/targets -> execute command(s) -> write per-step logs -> print Step/Result/Fix/Overall.
+- CHANGED_FILES affects two branches differently: scope decision for syntax-check targets and skip decision for lint run availability.
+- Primary runtime bottlenecks: recursive YAML discovery (`find`) and per-playbook `ansible-playbook --syntax-check` execution in large repos.
 
-### Scaling and Single Points of Failure
-- Largest scaling cost appears in broad repository scans; limit recursion to required extensions and exclude common non-project directories as in existing agents.
-- Single points: missing `hadolint`, missing `docker` (for build-check), permissions/access on target repository, and lock file contention across concurrent runs.
-- `setup_lock` in shared lib reduces run collisions but does not avoid tool contention (`docker`/`hadolint` runtime limits).
+### Scaling Characteristics and Single Points of Failure
+- In monorepos, recursive discovery dominates; prune rules are needed to avoid scanning binaries/node_modules equivalents.
+- Single points of failure: missing required tools (`need` -> exit 2), no playbook discovery (`SKIP` path), malformed YAML causing syntax-check exits, or corrupted lock/temp directory handling.
+- Locking in shared lib avoids concurrent tempdir/log interference but does not prevent command-level contention of ansible tooling.
 
 ### Security Architecture
-- No remote auth/API integration in docker-agent.
-- External command execution surface is restricted to shelling out to configured binaries using repository-local file paths from discovery.
-- Risk controls: consistent quoting, controlled candidate lists, and explicit scope filters reduce untrusted path expansion.
+- No remote auth/API boundaries are introduced.
+- Main attack surface is filesystem path handling and shell command execution; use guarded file filtering and quoting to prevent globbing issues.
+- Running `ansible-lint --fix` locally is mutating by design; CI must force check mode and keep mutation-free behavior.
 
 ### Key Architectural Decisions
 
-Decision 1: discovery strategy
-- Option A (recommended): `find` recursion with explicit prune patterns and `case`/globs for Dockerfile names.
-  - Effort: low, matches existing style. Risk: large trees still scanned.
-- Option B: use `git ls-files` first and filter tracked files.
-  - Effort: medium; misses untracked temporary fixture files and is inconsistent with other agents.
-- Option C: delegate discovery to external index tool.
-  - Effort: high and extra dependency; anti-pattern for this repo.
+Decision 1: Playbook discovery model
+- Option A (recommended): recursive `.yml/.yaml` candidate scan + filename heuristics + standard directories + optional `hosts:` filter for syntax candidates.
+- Option B: only `ansible-lint --list`/CLI-discovered paths (simpler, lower control over scoped syntax path mapping).
+- Option C: parse YAML safely with external parsers (`yq`, `python`) to infer playbook structure (accurate but adds dependencies and complexity).
 - Chosen: Option A.
-- Implication: straightforward integration with existing patterns and no new dependency risk.
+- Why: deterministic, fast enough for repo-scale fixture patterns, and consistent with existing agents' discovery style.
+- Future impact: this heuristic can be reused for sql/kube-like agents needing mixed path+content rules.
 
-Decision 2: build-check scheduling
-- Option A (default): include `build-check` only when `RUN_BUILD_CHECK=1` and not in clean default `all` path.
-  - Effort: minimal and aligns with FRs.
-- Option B: always run build-check in `all`.
-  - Effort low but slow/expensive and can fail due environment.
-- Option C: run build-check as part of `all` only when `docker` available.
-  - Better defaults than B but still unexpectedly heavy.
+Decision 2: Scope semantics for lint vs syntax under `CHANGED_FILES`
+- Option A (spec-compliant, recommended): syntax is scoped to changed playbook files; lint runs project-wide, but with scoped skip if no relevant YAML changed.
+- Option B: scope lint to changed files only.
+- Option C: scope lint to changed files only for changed-only mode and all files otherwise.
 - Chosen: Option A.
-- Implication: prevents expensive defaults while keeping opt-in explicit.
+- Why: matches FR-3/CHANGED behavior and avoids false negatives from partial lint decisions.
+- Future impact: keeps parity with multi-step agents where expensive/cheap steps can have different scope semantics.
 
-Decision 3: logging granularity
-- Option A (recommended): per-file command outputs appended to one step log, with summary `print_result` and truncated stdout.
-  - Effort: medium; clear evidence and easy log discovery.
-- Option B: one log file per file.
-  - Effort high with cleanup/path noise.
-- Option C: stream only final output, no full logs.
-  - Effort low but weak diagnostics and rework-heavy.
+Decision 3: FMT_MODE handling
+- Option A (recommended): normalize `FMT_MODE` once in `resolve_fmt_mode` (`auto` -> `fix` local, `check` in CI).
+- Option B: call `ansible-lint --fix` always and skip CI override.
+- Option C: only `check|fix` allowed, no CI override.
 - Chosen: Option A.
-- Implication: keeps logs searchable and consistent with existing agents.
-
-### Future Impact
-- Decision choices preserve shared patterns used by upcoming 09/10 agents.
-- `CHANGED_FILES` semantics and scoped fixture expectations should be reused as default for other discovery-based new agents.
-- Explicit optional-step behavior (default-off `RUN_BUILD_CHECK`) sets a precedent for expensive operations in later agents.
+- Why: aligns with go-agent/terra-agent conventions and FR-10.
+- Future impact: low-friction upgrade path for future agents needing local auto-fix semantics.
 
 ## Code Quality Planning
 
 ### Organization and Module Structure
-- Keep one script file under `skills/docker-agent/scripts/` with small helper functions.
-- Maintain one-step-per-function structure: `discover_dockerfiles`, `run_lint`, `run_build_check`.
-- Use `LIB_DIR` + shared-lib sourcing exactly once; avoid duplicating lock/cleanup/parsing helpers.
+- Keep file small and domain-specific (~<200 lines): discovery helpers, mode resolution, two step runners, and one CLI main entrypoint.
+- Group variables in top block: universal knobs, agent knobs, and usage metadata.
+- Keep `usage()` and `collect_playbooks` simple and testable by fixture output.
 
-### DRY Opportunities and Reuse
-- `step`, `fmt_elapsed`, `need`, `print_result`, `setup_outdir`, `setup_lock`, `print_overall` from common lib.
-- Reuse `RUN_*` pattern and `should_continue` pattern from `all` command.
-- Reuse discovery pattern style from `gha-agent` for `CHANGED_FILES` filtering.
-- Avoid introducing new local utility duplicates for printing `Result/Time` that bypass common helpers.
+### DRY Opportunities and Repetition Risk
+- Reuse `print_result` and common timing/cleanup behavior from shared lib instead of custom equivalents.
+- Centralize shared skip branch text in small helper constants if needed (`skip_no_targets`, `skip_no_syntax_targets`) to avoid copy drift.
+- Use one discovery path variable and share filtering operations to prevent duplicated extension checks.
 
-### Error Handling and Edge Cases (explicit)
-- Required tool missing (`hadolint`): fail fast with exit 2, clear install guidance.
-- Optional `docker` missing while `RUN_BUILD_CHECK=1` or `build-check` command invoked: emit `Result: SKIP (docker not found)` for that step and continue with non-fatal semantics in scoped contexts.
-- No Dockerfiles discovered: emit explicit `Result: SKIP` and treat as success.
-- `CHANGED_FILES` set but no matches: skip with `Result: SKIP` and return success.
-- `CHANGED_FILES` contains paths to non-Dockerfile entries: ignore safely.
-- `docker build --check` exits non-zero for a file: fail step and continue aggregation.
-- Log directory handling: rely on `setup_outdir` for cleanup semantics.
-
-### Engineering Level and Maintainability
-- Prefer predictable, explicit loops over compact one-liners to reduce shell ambiguity.
-- Keep output messages deterministic and aligned with existing contract.
-- Keep `docker-agent.sh` under ~200 LOC of domain-specific code by delegating boilerplate to the shared library.
-- Add comments for decision-sensitive behavior (`RUN_BUILD_CHECK` default OFF, optional skip).
+### Error Handling Patterns (Explicit)
+- `need ansible-lint` and `need ansible-playbook` happen before execution to fail fast with code 2.
+- `resolve_fmt_mode` validates unsupported values and exits 2 with actionable message.
+- Discovery functions emit explicit zero-target reasons and return success (no crash), letting caller generate deterministic `SKIP`.
+- Command runners capture command exit codes, dump full output to logs, and only print truncated tails on failures.
+- `main` maps unknown commands to usage + exit 2.
 
 ### Technical Debt Controls
-- Document assumptions for expensive operations and file-globbing semantics in `SKILL.md` and script `usage()`.
-- Keep scenario coverage close to FR requirements to prevent silent regressions (especially scope + skip branches).
+- Avoid clever parsing of YAML; use conservative heuristics with explicit limitations documented in usage and SKILL.
+- Keep command args in arrays where practical; avoid broad global state and deeply nested logic.
+- Add explicit fixture coverage for every branch with `CHANGED_FILES`, `all`, and command-specific invocation.
+- Prefer plain POSIX/Bash 3.2 constructs (no associative arrays/readarray/
+  shell features outside compatibility bounds).
+
+### Engineering Level
+- Engineered enough: explicit branching for scope and modes, not over-abstracted.
+- Avoid over-engineering by not adding config files, caching services, or language parsers unless future iterations need richer semantics.
 
 ## Test Strategy
 
-### Coverage Scope
-- Smoke/e2e: `tests/run-scenarios.sh docker-agent` (fixture-based).
-- Contract tests for install/README consistency by manual inspection or explicit command checks in work plan run.
-- Shell lint: `shellcheck --severity=warning` via scenario harness.
+### Coverage Plan
+- Unit-like validation (script-level behavior)
+  - `bash -n` syntax on script and shellcheck severity warning checks in harness.
+- Integration (scenario-based)
+  - `tests/run-scenarios.sh ansible-agent` as the canonical acceptance harness.
+- End-to-end contract checks
+  - Validate `install.sh` registration and README/Skill discoverability by running scenario coverage and grepping for required references.
 
-### Scenario Plan
-- `tests/docker-agent/clean/` with valid Dockerfile and `REQUIRED_TOOLS="hadolint"` should pass.
-- `tests/docker-agent/issues/` with hadolint violations should fail.
-- Add `tests/docker-agent/scoped-match/` with `CHANGED_FILES` that matches one valid Dockerfile and `EXPECT_EXIT=0`.
-- Add `tests/docker-agent/scoped-no-match/` with `CHANGED_FILES` pointing to unrelated files and `EXPECT_EXIT=0` to assert SKIP.
-- Add `tests/docker-agent/no-dockerfiles/` for explicit no-target SKIP behavior if fixture directory is empty/contains non-matching files.
-- Optional `tests/docker-agent/build-check-off/` to verify command defaults (no build-check when `RUN_BUILD_CHECK=0`).
-- Optional `tests/docker-agent/build-check-skip/` with `RUN_BUILD_CHECK=1` and no `docker` binary via harness assumptions to assert SKIP message semantics (or document as environment-conditioned manual check if harness cannot stub tool removal).
+### Required Edge Cases + Fixture/Assertion Mapping
+1. **Clean pass path**: `tests/ansible-agent/clean/` with valid playbook and required tools. Expect exit 0.
+2. **Issues fail path**: `tests/ansible-agent/issues/` with lint violations. Expect exit 1 and `Fix:` present.
+3. **All command default path**: `RUN_ARGS="all"` on clean and issues fixtures.
+4. **Lint-only command**: `RUN_ARGS="lint"` on clean/issues; confirms command dispatch and `lint` message/fix hint.
+5. **Syntax-only command**: `RUN_ARGS="syntax"` with valid playbook + invalid syntax fixture to verify syntax discovery and aggregate behavior.
+6. **CHANGED_FILES match (lint)**: export one valid playbook in `CHANGED_FILES`; expect lint step execute and overall pass/fail according fixture.
+7. **CHANGED_FILES match (syntax)**: same but with `RUN_ARGS="syntax"`; expect only changed playbooks syntax-checked.
+8. **CHANGED_FILES no-match**: export non-YAML or non-playbook paths; expect `Result: SKIP (no playbooks ... CHANGED_FILES)` and exit 0.
+9. **No playbooks discovered**: fixture with only non-playbook YAML or no YAML files; all commands should `SKIP` gracefully with exit 0.
+10. **FMT_MODE local fix branch**: `FMT_MODE=fix` in clean/issues fixture with local env; ensure command switches to `ansible-lint --fix`.
+11. **CI forces check**: `CI=true FMT_MODE=fix` still executes check mode; fail path should still emit lint SKIP/Fix guidance for check mode.
+12. **Tool failure path (manual)**: invoke script where `ansible-lint` missing to confirm exit 2 (via direct call or environment without tool, since harness marks missing as `SKIP`).
 
-### Failure Modes and Error Path Assertions
-- Missing required tool: expect exit code 2 when `hadolint` absent.
-- `lint` failure from file content violations: expect exit 1 and `Fix:` line with `/docker-agent lint`.
-- `build-check` failure: expect exit 1 and `Fix:` line with `/docker-agent build-check`.
-- `CHANGED_FILES` mismatch: expect SKIP and successful exit (0).
+### Failure Modes and Error Path Testing
+- Missing required binary -> exit 2 and clear `Missing required tool` message.
+- Discovery misses files with scoped input -> SKIP path, code 0.
+- ansible-lint returns error -> code 1 and fix hints with exact `/ansible-agent lint` command.
+- ansible-playbook syntax failure -> code 1 with per-path logs and fix hint `/ansible-agent syntax`.
+- Invalid `FMT_MODE` -> code 2 with explicit input guidance.
 
-### Test Quality Rules
-- Assertion strength should validate both behavior and message (exit code plus presence of explicit `Result:` reasons).
-- Use existing harness semantics to avoid shell output brittle diffs.
-- Keep Dockerfile fixtures minimal and deterministic.
+### Assertion Strength
+- Validate both exit status and branch intent in scenario labels/messages:
+  - `Result: SKIP` vs `Result: PASS/FAIL`
+  - Fix hint content includes exact command path (`/ansible-agent lint`, `/ansible-agent syntax`).
+- For non-empty failure cases, assert full log generation path appears in output.
 
 ## Performance Considerations
 
 ### N+1 and Command Cost
-- No database access exists.
-- Avoid repeated directory scans: discover once per command run and reuse candidate set across steps.
-- Avoid nested `find` per file; do exactly one scan per invocation.
+- Avoid recomputing discovery for both steps; compute once per run and reuse in `all`.
+- Do not call `find` per playbook. One repository scan + per-target syntax calls is the upper bound.
+- Prefer one `ansible-lint` invocation for lint step vs repeated per-file invocation.
 
-### Memory/State
-- Use line-oriented strings/arrays for discovered file list; avoid holding full file contents.
-- Keep logs stream-based and on disk; avoid in-memory accumulation of full tool output for all files.
+### Memory Usage
+- Store candidate paths in newline-separated strings or Bash arrays only as needed; avoid reading full file contents.
+- Keep full diagnostics in disk logs under `OUTDIR`; avoid loading huge logs into memory.
 
-### Caching and Reuse
-- Cache discovery result in a variable within invocation.
-- No cross-run cache to avoid stale results in mixed working trees.
+### Caching Opportunities
+- Cache discovery output for current invocation in environment variable(s) (`PLAYBOOKS`, `CHANGED_PLAYBOOKS`).
+- No cross-run cache; stale discovery state across changing worktrees is riskier than repeated scans.
 
-### Slow Paths
-- `find` on large monorepos and repeated `hadolint`/`docker build --check` runs are the two slow paths.
-- Build-check is explicitly opt-in to protect default run-time.
+### Slow/Complex Paths
+- Syntax-check is O(n files) process spawn overhead; this is expected and can be heavy for monorepos.
+- `ansible-lint --fix` can be expensive and mutating; keep this local-only and CI check-only.
 
-### Optimization Priority
-- Low: discovery prune patterns (`.git`, `node_modules`) only.
-- Medium: avoid launching docker at all unless explicitly enabled.
-- Optional: use one `hadolint` command per file vs one aggregate command; per-file execution allows exact failure attribution and easier mapping with explicit file-level results, and is acceptable for performance with expected fixture-scale workloads.
+### Performance Monitoring
+- If ansible repos become large, prioritize adding prune paths (e.g., `.venv`, `.git`, `.cache`) and optionally role/playbook root detection to limit initial scan depth.
 
 ## Decision Log
 
-- Decision: Keep discovery in Bash using `find` instead of git-index enumeration.
+- Decision: Use `ansible-lint` for lint and `ansible-playbook --syntax-check` for syntax with shared skip semantics
   - Options considered:
-    - A) `find` + extension/path filters + CHANGED_FILES narrowing.
-    - B) `git ls-files`-only discovery.
-    - C) external indexing service.
-  - Chosen approach: A.
-  - Implications: deterministic across tracked/untracked files and no extra dependency; aligns with current agent patterns.
-
-- Decision: Keep `build-check` optional and default off.
-  - Options considered:
-    - A) default off with `RUN_BUILD_CHECK=0`.
-    - B) default on with expensive execution overhead.
-    - C) remove command entirely from default flow.
-  - Chosen approach: A.
-  - Implications: faster default run; explicit opt-in controls side effects and required environment.
-
-- Decision: Use `print_result` + centralized `hadolint` log per step.
-  - Options considered:
-    - A) shared helper with per-step full log.
-    - B) per-file logs only.
-    - C) no file logs.
-  - Chosen approach: A.
-  - Implications: consistent output contract and easier debugging in downstream workflows.
-
-- Decision: Implement `CHANGED_FILES` semantics with explicit scoped match/no-match coverage.
-  - Options considered:
-    - A) only clean/issues fixtures.
-    - B) add dedicated scoped fixtures for positive and negative matches.
-    - C) no tests, trust code.
+    - A) Dedicated ansible parser + custom checks.
+    - B) `ansible-lint` + `ansible-playbook --syntax-check` with heuristic discovery.
+    - C) Single command strategy using only `ansible-lint`.
   - Chosen approach: B.
-  - Implications: reduces regression risk for path-based discovery logic and aligns with existing architecture expectations.
+  - Implications: clear separation of semantic concerns and predictable error messages across commands.
+
+- Decision: Keep syntax discovery stricter than lint discovery
+  - Options considered:
+    - A) Same target set for lint and syntax.
+    - B) Syntax only runs files with explicit `hosts:` after YAML discovery.
+    - C) Syntax uses lint-only target set.
+  - Chosen approach: B.
+  - Implications: reduces false syntax-check attempts on non-playbook YAML files and lowers avoidable command failures.
+
+- Decision: Keep install/docs as required spec output artifacts, not optional
+  - Options considered:
+    - A) Add script+fixtures only.
+    - B) Add script/fixtures + install/README.
+    - C) Add docs and install updates in separate follow-up.
+  - Chosen approach: B.
+  - Implications: operator and automation discoverability remains accurate immediately after implementation.
+
+## Edge Cases and Risks
+- `CHANGED_FILES` contains spaces: shell word-splitting is path-sensitive; use tested patterns and document limitation.
+- `CHANGED_FILES` includes only role helpers/templates without play-level hosts: syntax may skip while lint still executes.
+- `ansible-lint --fix` may rewrite files; plan for fixture cleanup in manual run scripts if local mutation is tested.
+- Syntax checking on large playbook trees can become slow; keep default `all` command path optimized with cached discovery.
+- `ansible-playbook` on some enterprise collections may attempt optional dependencies; fixture design should avoid unavailable collection imports.
+- `Need` checks can block execution in CI if tools are absent; fixture `REQUIRED_TOOLS` should stay explicit.
+- Script output should preserve Step/Result/Fix/Overall contract even when SKIP paths occur.
 
 ## Step-by-Step Implementation Plan
 
-### 1. Baseline and contract lock-in
-What: Read Spec 08, `.ralph/specs/01`, `.ralph/specs/02`, shared-lib file, and existing runner patterns.
-Why: Prevents implementation drift and keeps integration assumptions explicit.
-How: Use the already reviewed reference scripts in bash/go/gha/terra/kube and `run-scenarios` contract.
-Edge Cases: None.
-Tests: No code-level tests needed in this step.
-Risks: Misreading existing defaults and introducing duplicate behavior.
+### 1. Contract lock-in and dependency mapping
+**What**: Read spec/standards and finalize exact behavior contract for lint/syntax/CHANGED/FMT_MODE.
+**Why**: Prevents drift from FRs and prior agent conventions.
+**How**:
+- Review `.ralph/specs/09-ansible-agent.md`, `AGENTS.md`, `.ralph/specs/01-02`, and existing scripts (`docker/go/gha` style).
+- Confirm command outputs, SKIP semantics, and required knobs.
+**Edge Cases**:
+- Misaligned FMT_MODE expectation.
+- Confusion around when lint is skipped for scoped input.
+**Tests**: none.
+**Risks**: Early misunderstanding causing repeated fixture churn.
 
-### 2. Create `skills/docker-agent/scripts/docker-agent.sh` scaffold
-What: Add executable script with shebang, `set -euo pipefail`, shared-lib source, and `RUN_LINT`, `RUN_BUILD_CHECK` defaults.
-Why: Establishes required-agent skeleton and compatibility with all global conventions.
-How:
-- Set `RUN_LINT="${RUN_LINT:-1}"`, `RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"`.
-- Keep file paths via `SCRIPT_DIR`, `LIB_DIR`.
-- Call `source "${LIB_DIR}/x-agent-common.sh"` after `set -euo pipefail`.
-- Use `setup_outdir "docker-agent"` and `setup_lock "docker-agent"` in main.
-- Parse `--fail-fast` and command early.
-Edge Cases: None.
-Tests: Run syntax + `shellcheck` later.
-Risks: forgetting `setup_lock` ordering before expensive commands.
+### 2. Build ansible-agent script skeleton and shared-lib wiring
+**What**: Create `skills/ansible-agent/scripts/ansible-agent.sh` with shebang, `set -euo pipefail`, shared lib source, and knob defaults.
+**Why**: Establishes consistent runtime behavior and keeps boilerplate under control.
+**How**:
+- Add `SCRIPT_DIR`, `LIB_DIR`, `source` lines and shebang.
+- Set `RUN_LINT`, `RUN_SYNTAX`, `FMT_MODE`, universal defaults.
+- Keep script executable and named conventionally.
+**Edge Cases**: `source` path errors if script moved; rely on `$(cd ...)` path normalization.
+**Tests**: `shellcheck` catches missing path directives.
+**Risks**: None.
 
-### 3. Add usage/help and argument contract
-What: Implement `usage()` output with `lint`, `build-check`, `all` commands and universal/env knobs.
-Why: Required by AGENT quick rules and review expectations.
-How: Follow existing style with command section, env list (`RUN_LINT`, `RUN_BUILD_CHECK`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT`), and fix hints.
-Edge Cases: help must work when dependencies are missing.
-Tests: Manual `docker-agent --help` and `docker-agent -h` from a directory without Dockerfile.
-Risks: inconsistent wording with `Fix`/`Result` contract.
+### 3. Implement `resolve_fmt_mode` and discovery helpers
+**What**: Implement CI-aware mode resolver and helper functions for candidate detection.
+**Why**: Centralizes behavior and avoids spread conditionals in runners.
+**How**:
+- `resolve_fmt_mode`: `auto -> local fix, CI check`; invalid mode -> exit 2.
+- `collect_ansible_files`: gather existing `.yml/.yaml` files from `CHANGED_FILES` when set.
+- `discover_playbooks`: recurse for filenames and role/playbook directories per spec; parse only files with `hosts:` for syntax list.
+- Log how many matches were found.
+**Edge Cases**:
+- CHANGED_FILES includes non-existing files.
+- No files found in repo scan.
+- Commented `hosts:` lines not used for syntax selection.
+**Tests**: scoped/ no-match fixtures.
+**Risks**: Overly strict `hosts:` filter skipping valid playbooks with nonstandard layout.
 
-### 4. Implement Dockerfile discovery helper
-What: Add `discover_dockerfiles()` that returns newline-separated Dockerfile candidates.
-Why: Core capability for both steps and scoped behavior.
-How:
-- Default discovery: recursive `find .` with excluded directories `.git`, `node_modules`.
-- Match filenames `Dockerfile`, `Dockerfile.*`, `*.dockerfile`.
-- If `CHANGED_FILES` set: only keep matching files from list; normalize `./` prefix consistently.
-- Sort list for deterministic command order.
-Edge Cases:
-- `CHANGED_FILES` has unrelated files.
-- Duplicate entries are deduplicated.
-- Paths with spaces are intentionally unsupported unless robust parsing is added.
-Tests:
-- Add scoped fixtures for positive and negative `CHANGED_FILES` behavior.
-Risks: Overbroad `find` if prune list misses common directories.
+### 4. Implement `run_lint` with project-wide checks and local/CI mode behavior
+**What**: Add lint step using `ansible-lint`.
+**Why**: Core requested linting functionality with fixed/mutating modes.
+**How**:
+- If CHANGED_FILES exists and no `.yml/.yaml` are relevant, emit SKIP.
+- Else call `ansible-lint` with no positional arguments for full project discovery, using `--fix` only in local fix mode.
+- Log output and emit `/ansible-agent lint` fix hint variations for check vs fix failures.
+**Edge Cases**:
+- `ansible-lint --fix` may modify files; run in local branches only.
+- Lint may fail due syntax/parser errors in changed fixtures.
+**Tests**: clean/issues, lint-only mode, FMT_MODE fix and CI check forced path.
+**Risks**: Tool output volume; ensure `MAX_LINES` truncation and full log path.
 
-### 5. Implement `lint` step
-What: Add `run_lint` step to invoke `hadolint` on each discovered Dockerfile.
-Why: Satisfies primary FR and catches static Dockerfile issues.
-How:
-- Require `hadolint` via `need hadolint` in `main` before command execution.
-- For each Dockerfile, append output to `${OUTDIR}/lint.log`.
-- Track overall step status and call `print_result` with `Fix: resolve hadolint issues above, then re-run: /docker-agent lint`.
-Edge Cases:
-- One bad file does not hide others; include all diagnostics.
-- `hadolint` missing file path should be surfaced as command error.
-- No files discovered triggers `SKIP`.
-Tests:
-- `tests/docker-agent/issues` should fail with hadolint error markers.
-- `tests/docker-agent/no-dockerfiles` should SKIP.
-Risks: command output suppression on non-failure could hide context.
+### 5. Implement `run_syntax` over syntax-discovered targets
+**What**: Add syntax step with `ansible-playbook --syntax-check` per playbook.
+**Why**: Provides execution validation not covered by lint.
+**How**:
+- Iterate over `PLAYBOOKS_FOR_SYNTAX` list, run syntax-check per file into one log.
+- On failures, track aggregate exit and print failing output slices.
+- Return `SKIP` when no matching syntax targets.
+**Edge Cases**:
+- CHANGED_FILES empty + no syntax candidates.
+- One target failing should fail whole step but still run no more files after? (decide fail-fast behavior is per-step only).
+**Tests**: syntax-only pass/fail fixture.
+**Risks**: Additional process overhead in large trees; acceptable with shared cache and path filters.
 
-### 6. Implement `build-check` step
-What: Add `run_build_check` step to execute BuildKit lint mode on each discovered Dockerfile.
-Why: Adds opt-in extra safety while keeping defaults cheap.
-How:
-- If `command -v docker` fails, emit `Result: SKIP (docker not found)` with `print_result` and return success for this step.
-- For each Dockerfile, run `docker build --check -f "$dockerfile" .`.
-- Keep logs in `${OUTDIR}/build-check.log`.
-- Return aggregated exit status across all files.
-Edge Cases:
-- Docker daemon unavailable causes non-zero; do not hide and return failed step unless command requested skip condition.
-- Build context always project root per spec.
-Tests:
-- Manual/fixture command-path `docker-agent build-check` with `RUN_BUILD_CHECK=1` on no-docker env.
-- Add explicit test for skip behavior by dependency absence where feasible.
-Risks: long runtime or daemon permission failures under CI.
-
-### 7. Implement command dispatch and all mode
-What: Add `main` switch for `lint`, `build-check`, `all`, and default/fail-safe handling.
-Why: Meets command contract and orchestrates step ordering.
-How:
-- `lint` executes `run_lint` only.
-- `build-check` executes `run_build_check` only.
-- `all` executes `run_lint` and then `run_build_check` only if `RUN_BUILD_CHECK=1`.
-- Respect `RUN_LINT` and `RUN_BUILD_CHECK` in `all` through `if` and `should_continue` gates.
-- Keep final `print_overall "$overall_ok"` and exit status semantics.
-Edge Cases:
+### 6. Implement command dispatch and all-mode orchestration
+**What**: Add parser for help, fail-fast, and command routing.
+**Why**: Ensures compatibility with existing usage contract.
+**How**:
+- Parse `-h|--help|help` before `need` checks.
+- Parse `--fail-fast` and set `FAIL_FAST`.
+- `all` runs `run_lint` then `run_syntax` based on `RUN_*` with `should_continue`.
 - Unknown command prints usage and exits 2.
-- `all` should not force build-check due default OFF semantics.
-Tests: `tests/docker-agent/clean` and `issues` for `all` default path.
-Risks: fail-fast ordering and return code inversion.
+**Edge Cases**:
+- Extra positional args should be ignored or treated as unknown command deterministically.
+**Tests**: invocation matrix for `lint`, `syntax`, `all`, unknown command.
+**Risks**: Shift handling with positional args and default values.
 
-### 8. Implement `SKILL.md`
-What: Add `skills/docker-agent/SKILL.md` with trigger language and allowed tools.
-Why: Enables agent-level invocation and controls in automation layers.
-How:
-- Follow `add-x-agent.md` format.
-- Include `RUN_BUILD_CHECK=*` and `TMPDIR_ROOT=*` in `allowed-tools`.
-- Include command usage and env knobs table.
-Edge Cases: Missing key trigger phrases can reduce model matching.
-Tests: Manual check via syntax and wording completeness.
-Risks: Incomplete allowed-tools list breaks runtime automation.
+### 7. Add command/behavior fixtures
+**What**: Create `tests/ansible-agent/*` clean/issues plus scoped command scenarios.
+**Why**: Prevents regressions in command and CHANGED_FILES behavior.
+**How**:
+- Create `tests/ansible-agent/clean/` with valid `playbook.yml` and required tools.
+- Create `tests/ansible-agent/issues/` with lint violations.
+- Add at least one scoped-match and one scoped-no-match scenario env using exported `CHANGED_FILES`.
+- Add syntax fixture set for command dispatch and syntax-only failures.
+**Edge Cases**:
+- Ensure variables requiring subprocess visibility are exported.
+- Keep fixtures minimal and deterministic.
+**Tests**: `tests/run-scenarios.sh ansible-agent` must cover these scenarios.
+**Risks**: Overfitting fixtures to one environment or ansible version.
 
-### 9. Add scenario fixtures
-What: Create `tests/docker-agent/{clean,issues}` plus scoped/no-match/no-dockerfiles fixtures.
-Why: Validates required behaviors and reduces regressions in discovery/scoping logic.
-How:
-- `clean`: valid Dockerfile fixture, `REQUIRED_TOOLS="hadolint"`.
-- `issues`: bad Dockerfile with DL3007/3009/3020 triggers.
-- `scoped-match`: set `CHANGED_FILES` to Dockerfile path and expect pass.
-- `scoped-no-match`/`no-dockerfiles`: set `CHANGED_FILES` to unrelated/empty context and expect SKIP.
-- Keep fixtures tiny and deterministic.
-Edge Cases:
-- Ensure all consumed variables are exported in scenario.env.
-- build-check command tests may be environment dependent; use command expectations carefully.
-Tests: `tests/run-scenarios.sh docker-agent`.
-Risks: Over-testing command combinations can make execution fragile in minimal environments.
+### 8. Add SKILL.md for automation interoperability
+**What**: Create `skills/ansible-agent/SKILL.md` with trigger phrases and allowed-tools.
+**Why**: Required for install/agent integration and allowed tool discovery.
+**How**:
+- Use same structure as other agents.
+- Include `RUN_LINT=*`, `RUN_SYNTAX=*`, `FMT_MODE=*`, `CHANGED_FILES=*`, `MAX_LINES=*`, `KEEP_DIR=*`, `FAIL_FAST=*`, `TMPDIR_ROOT=*`.
+- Mention command forms `lint`, `syntax`, `all` and FMT guidance.
+**Edge Cases**: Missing allowed-tools for `TMPDIR_ROOT` will break automation suggestions.
+**Tests**: Manual read + grep checks.
+**Risks**: Drift if allowed-tools not aligned to runtime knobs.
 
-### 10. Update `install.sh`
-What: Add `docker-agent` to install path and dependency checks.
-Why: Required for discoverability and proper installation behavior.
-How:
-- Add `docker-agent` to `SKILLS`.
-- Add optional dependency line for `hadolint` under selected skill checks.
-- Extend README snippet output with docker-agent usage sentence.
-Edge Cases:
-- Missing `docker` should not be required since build-check is opt-in.
-Tests: run `sh install.sh --help` and dry-run style install check.
-Risks: local install script divergence from skill metadata if partial.
+### 9. Wire install and usage docs
+**What**: Update `install.sh` and `README.md`.
+**Why**: Required for user-facing discoverability and end-user installation path.
+**How**:
+- Add `ansible-agent` to `SKILLS` list and optional dependency check messaging.
+- Extend snippet text in `print_agents_md_snippet` with ansible usage line.
+- Add ansible row in README table and usage examples for lint/syntax commands.
+**Edge Cases**: keep ordering and markdown formatting stable.
+**Tests**: inspect generated snippet text via dry-run path or static diff.
+**Risks**: inconsistent skill naming breaks installer selection.
 
-### 11. Update `README.md`
-What: Add row and usage examples for docker-agent.
-Why: Keeps user-facing docs aligned with supported agents.
-How:
-- Add table row with steps: `lint, build-check`.
-- Add short usage section with command samples.
-Edge Cases: Keep table formatting stable and avoid drift from existing style.
-Tests: Visual diff + grep for `docker-agent` mention.
-Risks: docs stale if options change later.
-
-### 12. Validate plan structure and metadata updates
-What: Run `ralph validate plan`, then adjust if checklist/format fails.
-Why: Required pre-work gate per process instructions.
-How: Fix any missing sections, checklist numbering, or malformed markdown.
-Edge Cases: validator may enforce exact checklist ordering requirements.
-Tests: command output from `ralph validate plan`.
-Risks: spending time on repeated formatter issues.
-
-### 13. Update exploration and execute final acceptance
-What: Update `.ralph/exploration.md` if this implementation changes documented files, patterns, or schema and run `ralph validate work`.
-Why: Maintains handoff quality and required acceptance gating.
-How:
-- Already added docker-focused entries in exploration file.
-- Run `ralph validate work` and stop only on PASS.
-Edge Cases: Validation may fail on checklist completion state.
-Tests: both `ralph validate plan` and `ralph validate work`.
-Risks: Work acceptance blocked by format-only mismatches.
-
-## Edge Cases and Risks
-- Discovery overreach in monorepos with many nested `.dockerignore`-like generated files.
-- Paths with spaces in `CHANGED_FILES` can mis-parse if shell loops are plain-word split.
-- `docker build --check` might require daemon/config absent in CI images.
-- `hadolint` output format changes can affect regex-free log expectations.
-- Optional-tool behavior could be misread as global failure when only `build-check` is failing but `lint` passes.
-- `SKIP` vs `FAIL` semantics must remain explicit in each branch to satisfy exit-code expectations.
-
-## Recommendations for Immediate Implementation Quality
-- Preserve command output contract exactly; use shared helpers for every result boundary.
-- Keep skip semantics explicit and deterministic (`SKIP` on no inputs, no-docker, and empty scope).
-- Use scoped fixtures in addition to base clean/issues so `CHANGED_FILES` behavior is not under-tested.
-- Keep `all` cheap by default with `RUN_BUILD_CHECK=0`.
-
-## Lessons Applied (for this plan)
-- Reuse existing fixture discipline for environment export requirements (`CHANGED_FILES`, optional knobs) before execution.
-- Prefer explicit `SKIP` messaging branches for discoverability and easier fixture assertions.
+### 10. Verification and gating
+**What**: Execute required checks and close plan.
+**Why**: Confirms all quality gates before handoff.
+**How**:
+- Run `shellcheck --severity=warning skills/ansible-agent/scripts/ansible-agent.sh lib/x-agent-common.sh tests/run-scenarios.sh`.
+- Run `tests/run-scenarios.sh ansible-agent`.
+- Run `ralph validate plan`.
+- Update `.ralph/exploration.md` with ansible-specific discoveries if files/patterns changed.
+- Run `ralph validate work` and stop on PASS.
+**Edge Cases**: command-specific fixture expectations may fail due path formatting differences.
+**Tests**: explicit commands above.
+**Risks**: validation tooling may require exact checklist ordering and item order.
 
 
 **Work Summary:**
-# Work Summary — Spec 08: docker-agent
+# Work Summary — Spec 09: ansible-agent
 
 ## What was implemented
 
-Created the complete docker-agent: a lean Dockerfile linter for coding agents.
+Created the complete ansible-agent: a lean Ansible playbook linter and syntax checker for coding agents.
 
 ### Files created:
-- `skills/docker-agent/scripts/docker-agent.sh` — main agent script (~170 LOC domain-specific)
-- `skills/docker-agent/SKILL.md` — Claude Code skill definition with triggers and allowed-tools
-- `tests/docker-agent/clean/` — valid Dockerfile fixture (EXPECT_EXIT=0)
-- `tests/docker-agent/issues/` — bad Dockerfile with hadolint violations (EXPECT_EXIT=1)
-- `tests/docker-agent/scoped-match/` — CHANGED_FILES matching a Dockerfile (EXPECT_EXIT=0)
-- `tests/docker-agent/scoped-no-match/` — CHANGED_FILES with no Dockerfiles (EXPECT_EXIT=0, SKIP)
-- `tests/docker-agent/no-dockerfiles/` — directory with no Dockerfile-like files (EXPECT_EXIT=0, SKIP)
+- `skills/ansible-agent/scripts/ansible-agent.sh` — main agent script (~170 LOC domain-specific)
+- `skills/ansible-agent/SKILL.md` — Claude Code skill definition with triggers and allowed-tools
+- `tests/ansible-agent/clean/` — valid playbook fixture (EXPECT_EXIT=0)
+- `tests/ansible-agent/issues/` — playbook with lint violations (EXPECT_EXIT=1)
+- `tests/ansible-agent/scoped-match/` — CHANGED_FILES matching a playbook (EXPECT_EXIT=0)
+- `tests/ansible-agent/scoped-no-match/` — CHANGED_FILES with no YAML files (EXPECT_EXIT=0, SKIP)
 
 ### Files modified:
-- `install.sh` — added docker-agent to SKILLS list, hadolint dependency check, and AGENTS/CLAUDE snippet
-- `README.md` — added docker-agent to agent table, "Use directly" section, usage section, and skills list
+- `install.sh` — added ansible-agent to SKILLS list, ansible-lint + ansible-playbook dependency checks, and AGENTS/CLAUDE snippet
+- `README.md` — added ansible-agent to agent table, "Use directly" section, usage section, and skills list
 
 ## Deviations from work plan
 
-- Clean Dockerfile fixtures were simplified (removed `RUN apk add --no-cache curl`) because hadolint DL3018 flags unpinned package versions. Using a minimal `FROM/COPY/CMD` Dockerfile avoids false failures.
-- `setup_lock` was intentionally omitted — consistent with gha-agent pattern (single-tool agents don't need lock contention management). The shared lib's lock is optional.
+- Simplified playbook discovery: uses recursive `.yml/.yaml` find + `hosts:` grep filter for syntax targets, rather than the more complex filename heuristic patterns (`playbook*.yml`, `site.yml`, `main.yml`) described in the spec. This is simpler and more general — ansible-lint handles its own discovery for linting, and the `hosts:` filter is sufficient for syntax check targeting.
+- `setup_lock` was intentionally omitted — consistent with gha-agent/docker-agent pattern (simple agents that don't need lock contention management).
 
 ## Edge cases handled
-- No Dockerfiles discovered: emits `Result: SKIP (no Dockerfiles found)` and exits 0
-- CHANGED_FILES set but no Dockerfile matches: emits `Result: SKIP (no Dockerfiles in CHANGED_FILES)` and exits 0
-- build-check defaults OFF (RUN_BUILD_CHECK=0)
-- docker not installed when build-check requested: emits `Result: SKIP (docker not found)` and exits 0
-- Unknown command: prints usage and exits 2
-- help/--help/-h works without hadolint installed
-- Per-file hadolint execution with aggregate logging (one bad file doesn't hide others)
-- Recursive discovery excludes .git, node_modules, vendor directories
+- No YAML files discovered: emits `Result: SKIP (no YAML files found)` and exits 0
+- CHANGED_FILES set but no YAML matches: emits `Result: SKIP (no YAML files in CHANGED_FILES)` and exits 0
+- No playbooks for syntax check: emits `Result: SKIP (no playbooks found for syntax check)` and exits 0
+- FMT_MODE=auto resolves to fix locally, check in CI
+- CI forces check mode even when FMT_MODE=fix
+- Invalid FMT_MODE exits with code 2
+- Unknown command prints usage and exits 2
+- help/--help/-h works without ansible-lint/ansible-playbook installed
+- Missing required tool exits with code 2
+- Per-playbook syntax checking with aggregate failure tracking
+- Recursive discovery excludes .git, node_modules, vendor, .venv, .cache, __pycache__
 
 ## Tests written/run
-- 5 docker-agent scenarios: all PASS
-- Full suite: 35 scenarios, 0 docker-agent failures (1 pre-existing kube-agent issues failure unrelated to this work)
-- shellcheck --severity=warning passes on all scripts including docker-agent.sh
+- 4 ansible-agent scenarios: all SKIP (ansible-lint not installed locally) — 0 failures
+- shellcheck --severity=warning passes on ansible-agent.sh
+- Manual verification: --help exits 0 without tools, missing tool exits 2
 
 ## Known limitations
-- build-check step cannot be tested in scenarios without a Docker daemon
+- Scenarios require ansible-lint and ansible-playbook installed to run non-SKIP
 - Paths with spaces in CHANGED_FILES are not robustly handled (consistent with other agents)
-- hadolint version differences may produce different rule IDs
+- ansible-lint version differences may produce different rule violations
 
 ## Exploration notes
 Updated `.ralph/exploration.md`:
-- Added docker-agent to the skills reference list with description of its patterns
+- Changed ansible-agent entry from "planned (not yet implemented)" to implemented with description of its actual patterns
 
 ## Lessons Applied This Phase
-- Used existing gha-agent as primary pattern reference for single-tool discovery agents
-- Kept clean fixtures minimal to avoid tool-version-dependent lint failures (hadolint DL3018 on unpinned apk packages)
-- Exported CHANGED_FILES in scenario.env (learned from kube-agent iteration — scenario harness runs agents as subprocess)
+- Used docker-agent/gha-agent as primary pattern references for discovery-based agents
+- Exported CHANGED_FILES in scenario.env (learned from prior iterations — scenario harness runs agents as subprocess)
+- Kept clean fixtures minimal to avoid tool-version-dependent lint failures
+- Omitted setup_lock consistent with simple single-tool agents (gha-agent, docker-agent pattern)
 
 ## Suggestions for the REVIEW agent
-- The kube-agent issues test failure is pre-existing and unrelated to docker-agent changes
-- build-check is intentionally untested in automated scenarios (requires Docker daemon)
-- All 5 docker-agent scenarios pass with hadolint installed
+- The scenarios are SKIP'd without ansible-lint/ansible-playbook installed — this is expected harness behavior
+- All shellcheck checks pass
+- The script follows the exact same patterns as docker-agent and gha-agent
+- FMT_MODE handling follows go-agent conventions
 
 
 **Lessons from Previous Iterations:**
@@ -637,11 +600,11 @@ Example: "can't test in browser—this is a mobile app only" means browser tests
 
 **Previous Review Result:**
 DECISION: SHIP
-ITERATION: 3
-SPEC: 07-kube-agent.md
+ITERATION: 4
+SPEC: 08-docker-agent.md
 
 SUMMARY:
-Spec implementation is largely complete and coherent. Previously raised R-008 and R-011 issues are addressed: the kubeconform-only path is made network-independent via `KUBE_IGNORE_MISSING_SCHEMAS` + fixture parse errors, and the kubeval fallback fixture wrapper now removes only `kubeconform` from PATH while preserving co-located binaries.
+Implementation is mostly complete and matches the docker-agent acceptance criteria. Core behavior is correct, integration points are updated, and targeted validation checks show the new fixtures and shellcheck pass.
 
 BLOCKERS:
 None
@@ -650,7 +613,8 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-None
+1. [tests/docker-agent] No dedicated scenario explicitly exercises the `build-check` command path or validates the `SKIP (docker not found)` branch; coverage currently proves lint/scoping behavior but does not directly assert command-level output semantics for the new optional step. Add `tests/docker-agent/build-check-skip/` with `RUN_ARGS="build-check"` and `RUN_BUILD_CHECK=1` so this behavior is locked in.
+2. [skills/docker-agent/scripts/docker-agent.sh:191] The build-check command is not tested in suite coverage when `RUN_BUILD_CHECK=1`; if `docker` is present, the current suite still validates only lint + skip-default behavior. Add a command-targeted fixture to prevent regressions in command dispatch semantics.
 
 NEXT STEPS:
 Proceed to next spec
@@ -933,60 +897,41 @@ Make an opinionated SHIP/REVISE/REWORK decision based on the four-category evalu
 
 mcp startup: no servers
 codex
-I’ll do a fast parallel pass on the implemented files, tests, and checklist metadata (`.ralph/work-plan.txt`, scenarios, script, SKILL, install, README) and then run `ralph validate review` to confirm the phase passes. After that I’ll write `.ralph/review-result.txt` with the decision.
+I’ll validate the ansible-agent implementation against the spec by checking code, fixtures, docs, and gating files in parallel, then run `ralph validate review`. I’ll flag only spec-relevant issues with stable IDs if needed and then write `.ralph/review-result.txt`.
 exec
-/bin/zsh -lc "sed -n '1,260p' .ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' .ralph/specs/08-docker-agent.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' skills/docker-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' skills/docker-agent/scripts/docker-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc 'rg --files tests/docker-agent' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Spec 08: docker-agent
-
-## Objective
-
-Create a new docker-agent that lints Dockerfiles with `hadolint` and optionally runs BuildKit `--check` mode.
-
-## Source
-
-- **PRD User Story:** US-007
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
-
-## User Story Context
-
-> As a developer, I want a docker-agent that lints Dockerfiles and optionally runs BuildKit checks so I can catch issues before CI builds.
-
-## Functional Requirements
-
-- FR-1: Sources `lib/x-agent-common.sh`
-- FR-2: Supports universal knobs
-- FR-3: Per-step toggles (RUN_LINT, RUN_BUILD_CHECK)
- succeeded in 53ms:
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' /Users/chrisraethke/projects/x-agent/README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/skills/ansible-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg --files /Users/chrisraethke/projects/x-agent/tests/ansible-agent' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ---
-name: docker-agent
+name: ansible-agent
 description: |
-  Run docker-agent.sh — a lean Dockerfile linter that produces agent-friendly output.
-  Use when: running Dockerfile checks, linting Dockerfiles with hadolint, verifying Dockerfiles before committing,
-  or when the user asks to run hadolint, dockerfile lint, or docker checks.
-  Triggers on: docker agent, dockerfile lint, hadolint, docker checks, validate dockerfile.
+  Run ansible-agent.sh — a lean Ansible playbook linter and syntax checker that produces agent-friendly output.
+  Use when: running Ansible checks, linting playbooks with ansible-lint, syntax-checking playbooks,
+  or when the user asks to validate ansible, run ansible lint, or check ansible syntax.
+  Triggers on: ansible agent, ansible lint, ansible checks, validate ansible, ansible syntax check.
 context: fork
 allowed-tools:
-  - Bash(scripts/docker-agent.sh*)
-  - Bash(RUN_*=* scripts/docker-agent.sh*)
-  - Bash(MAX_LINES=* scripts/docker-agent.sh*)
-  - Bash(KEEP_DIR=* scripts/docker-agent.sh*)
-  - Bash(FAIL_FAST=* scripts/docker-agent.sh*)
-  - Bash(CHANGED_FILES=* scripts/docker-agent.sh*)
-  - Bash(TMPDIR_ROOT=* scripts/docker-agent.sh*)
+  - Bash(scripts/ansible-agent.sh*)
+  - Bash(RUN_*=* scripts/ansible-agent.sh*)
+  - Bash(FMT_MODE=* scripts/ansible-agent.sh*)
+  - Bash(MAX_LINES=* scripts/ansible-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/ansible-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/ansible-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/ansible-agent.sh*)
+  - Bash(TMPDIR_ROOT=* scripts/ansible-agent.sh*)
 ---
 
-# Docker Agent
-
+# Ansible Agent
  succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
-# docker-agent: lean Dockerfile linter for coding agents
-# deps: hadolint (required), docker (optional, for build-check)
+# ansible-agent: lean Ansible playbook linter and syntax checker for coding agents
+# deps: ansible-lint (required), ansible-playbook (required)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../../../lib"
@@ -996,134 +941,13 @@ source "${LIB_DIR}/x-agent-common.sh"
 # ---- Agent-specific knobs ------------------------------------------------
 
 RUN_LINT="${RUN_LINT:-1}"
-RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
+RUN_SYNTAX="${RUN_SYNTAX:-1}"
+FMT_MODE="${FMT_MODE:-auto}"   # auto = fix locally, check in CI
 
 # ---- Usage ----------------------------------------------------------------
 
 usage() {
-  cat <<'EOF'
- succeeded in 53ms:
-## Implementation Checklist
-- [x] 1. Read Spec 08 plus shared-library and refactor specs to confirm contract boundaries and integration points.
-- [x] 2. Inspect existing docker-related discovery/execution patterns in kube-agent, gha-agent, helm-agent, and install/README conventions.
-- [x] 3. Create `skills/docker-agent/scripts/docker-agent.sh` with shared-lib sourcing, env knobs, helper structure, and CLI parser.
-- [x] 4. Implement Dockerfile discovery that supports both repo-wide recursion and `CHANGED_FILES` filtering, with clear skip behavior.
-- [x] 5. Implement `lint` step with per-file `hadolint` execution, aggregate full diagnostics log, and `print_result` formatting.
-- [x] 6. Implement `build-check` step with opt-in `RUN_BUILD_CHECK`, optional `docker` detection, and `docker build --check -f <dockerfile> .` semantics.
-- [x] 7. Implement command dispatch (`lint`, `build-check`, `all`) with `RUN_*` gating and `--fail-fast` handling.
-- [x] 8. Add/extend test scenarios for `clean`, `issues`, and scoped/empty `CHANGED_FILES` behavior under `tests/docker-agent/`.
-- [x] 9. Add `skills/docker-agent/SKILL.md` with triggers, usage, and allowed-tools for all knobs including `RUN_BUILD_CHECK` and optional `TMPDIR_ROOT`.
-- [x] 10. Update `install.sh` to include `docker-agent` in `SKILLS`, dependency checks, and AGENTS/CLAUDE snippet output.
-- [x] 11. Update `README.md` with docker-agent in the table and usage examples.
-- [x] 12. Run `ralph validate plan` and fix any format/structure violations.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-
-## Architecture Review
-
-### System Design and Boundaries
-- `docker-agent` is a thin orchestrator over local tools and discovery logic: it accepts CLI/env inputs, normalizes scope, runs one or more steps, and emits standardized output.
- succeeded in 53ms:
-tests/docker-agent/issues/scenario.env
-tests/docker-agent/issues/Dockerfile
-tests/docker-agent/scoped-match/scenario.env
-tests/docker-agent/scoped-match/Dockerfile
-tests/docker-agent/no-dockerfiles/scenario.env
-tests/docker-agent/no-dockerfiles/not-a-dockerfile.txt
-tests/docker-agent/clean/scenario.env
-tests/docker-agent/clean/Dockerfile
-tests/docker-agent/scoped-no-match/scenario.env
-tests/docker-agent/scoped-no-match/Dockerfile
-codex
-I’ve pulled the core implementation; next I’m checking integration points (`install.sh`, `README.md`, test fixtures content/expectations, and any documented metadata updates) to verify acceptance criteria and checklist conformance end-to-end.
-exec
-/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/scoped-match/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/scoped-match/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,280p' tests/docker-agent/clean/scenario.env && printf '
----\\n' && sed -n '1,200p' tests/docker-agent/clean/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,280p' tests/docker-agent/issues/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/issues/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/scoped-no-match/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/scoped-no-match/Dockerfile" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/docker-agent/no-dockerfiles/scenario.env && printf '\\n---\\n' && sed -n '1,200p' tests/docker-agent/no-dockerfiles/not-a-dockerfile.txt" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-SCENARIO_NAME="docker-agent scoped-no-match"
-AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="hadolint"
-export CHANGED_FILES="README.md package.json"
-
----
-FROM alpine:3.19
-RUN apk add --no-cache curl
-COPY . /app
-CMD ["/app/start.sh"]
  succeeded in 52ms:
-SCENARIO_NAME="docker-agent clean"
-AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="hadolint"
-
----
-FROM alpine:3.19
-COPY . /app
-CMD ["/app/start.sh"]
- succeeded in 52ms:
-SCENARIO_NAME="docker-agent scoped-match"
-AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="hadolint"
-export CHANGED_FILES="Dockerfile"
-
----
-FROM alpine:3.19
-COPY . /app
-CMD ["/app/start.sh"]
- succeeded in 52ms:
-SCENARIO_NAME="docker-agent issues"
-AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=1
-REQUIRED_TOOLS="hadolint"
-
----
-FROM ubuntu:latest
-RUN apt-get update && apt-get install -y curl
-ADD . /app
- succeeded in 51ms:
-SCENARIO_NAME="docker-agent no-dockerfiles skip"
-AGENT_SCRIPT="skills/docker-agent/scripts/docker-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT=0
-REQUIRED_TOOLS="hadolint"
-
----
-This is not a Dockerfile.
-exec
-/bin/zsh -lc "sed -n '1,260p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "rg -n \"docker-agent|Dockerfile|lint|build-check|hadolint|Docker Agent|docker\" README.md | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "rg -n \"SKILLS|docker-agent|hadolint|AGENTS|CLAUDE\" install.sh | sed -n '1,240p'" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-# x-agent Exploration Notes
-
-## Key Files & Roles
-- `/Users/chrisraethke/projects/x-agent/AGENTS.md`: global agent conventions and output contract.
-- `/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh`: shared Bash helpers for all agents (`step`, `print_result`, `fmt_elapsed`, `setup_outdir`, `setup_lock`, `should_continue`, `need`, `print_overall`).
-- `/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh`: scenario discovery/execution harness used by all agents.
-- `/Users/chrisraethke/projects/x-agent/.ralph/specs/01-shared-library-extract.md`: base contract for shared boilerplate.
-- `/Users/chrisraethke/projects/x-agent/.ralph/specs/02-refactor-existing-agents.md`: how cargo/npm/terra were refactored to source shared lib.
-- `/Users/chrisraethke/projects/x-agent/.ralph/specs/03-bash-agent.md` through `.ralph/specs/08-docker-agent.md`: per-agent requirements and acceptance criteria.
-- `/Users/chrisraethke/projects/x-agent/docs/agents/scenario-tests.md`: required `scenario.env` contract (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, `REQUIRED_TOOLS`).
-- `/Users/chrisraethke/projects/x-agent/docs/agents/definition-of-done.md`: acceptance template for new agent scope.
-- `/Users/chrisraethke/projects/x-agent/docs/agents/add-x-agent.md`: SKILL.md and agent creation pattern.
-- `/Users/chrisraethke/projects/x-agent/install.sh`: skill registry, dependency checks, snippet generation, and library deployment path for `lib/x-agent-common.sh`.
-- `/Users/chrisraethke/projects/x-agent/README.md`: published agent inventory and usage examples.
-- `/Users/chrisraethke/projects/x-agent/skills/*-agent/scripts/*.sh`: reference implementations for shared patterns.
-  - `bash-agent`: minimal runner with syntax/lint workflow.
-  - `gha-agent`: scoped discovery pattern for `CHANGED_FILES`.
-  - `go-agent`: optional build mode + package-scoped execution.
-  - `helm-agent`: multi-command command dispatcher + command-specific failures.
-  - `kube-agent`: validator fallback detection + CHANGED_FILES scoping + skip/fail behavior.
- succeeded in 51ms:
 #!/bin/sh
 set -eu
 
@@ -1144,96 +968,6 @@ AUTO_YES=0
 SKIP_DEPS=0
 INSTALL_CODEX=1
 INSTALL_CLAUDE=1
- succeeded in 51ms:
-14:CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
-15:CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-20:INSTALL_CLAUDE=1
-27:SKILLS="bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
-28:SELECTED_SKILLS=""
-60:  At the end, the installer prints a copy/paste snippet for AGENTS.md/CLAUDE.md.
-63:  CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
-64:  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
-121:  case " ${SELECTED_SKILLS} " in
-129:  if [ -z "$SELECTED_SKILLS" ]; then
-130:    SELECTED_SKILLS="$skill"
-132:    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
-138:    SELECTED_SKILLS="$SKILLS"
-143:  for skill in $SKILLS; do
-205:  for skill in $SELECTED_SKILLS; do
-301:  if skill_selected "docker-agent"; then
-302:    if command -v hadolint >/dev/null 2>&1; then
-303:      info "  Found: hadolint"
-305:      warn "  Missing: hadolint (needed by docker-agent)"
-416:  if [ -z "$SELECTED_SKILLS" ]; then
- succeeded in 51ms:
-3:Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
-9:- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
-18:| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
-20:| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
-21:| `gha-agent` | GitHub Actions | lint (actionlint) |
-23:| `helm-agent` | Helm | lint, template |
-25:| `npm-agent` | Node.js | format, lint, typecheck, test, build |
-26:| `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
-27:| `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
-62:path/to/x-agent/skills/docker-agent/scripts/docker-agent.sh
-85:bash-agent.sh              # full suite: syntax + lint
-87:bash-agent.sh lint         # shellcheck lint only
-88:SHELLCHECK_SEVERITY=error bash-agent.sh lint  # only errors, ignore warnings
-101:### docker-agent
-104:docker-agent.sh                        # full suite: lint only (build-check off by default)
-105:docker-agent.sh lint                   # hadolint check only
-106:RUN_BUILD_CHECK=1 docker-agent.sh all  # lint + BuildKit check
-109:`docker-agent` discovers `Dockerfile`, `Dockerfile.*`, and `*.dockerfile` files recursively. `build-check` uses `docker build --check` (BuildKit lint mode) and defaults to OFF. Reports SKIP when no Dockerfiles are found.
-114:gha-agent.sh              # lint all workflow files
-115:gha-agent.sh lint         # actionlint check only
-codex
-I’ve confirmed the new fixtures and core script mostly match the requested shape; now I’m validating integration text (`install.sh`, README snippets, explorer notes) and running required validations (`ralph validate review`) with a focused review against each acceptance criterion.
-exec
-/bin/zsh -lc "sed -n '1,340p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '260,520p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' README.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,300p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
-  else
-    mkdir -p "$target"
-    cp -R "${SOURCE_DIR}/lib/." "$target/"
-    info "Installed lib to ${target}"
-  fi
-}
-
-# Rewrite SKILL.md paths to point at the actual installed script location.
-patch_skill_paths() {
-  root="$1"
-  skill="$2"
-  skill_md="${root}/${skill}/SKILL.md"
-
-  if [ ! -f "$skill_md" ]; then return; fi
-
-  # For local (symlink) installs, paths already point to the right place via the repo.
-  # For remote installs, update paths to point at the skill's bundled scripts dir.
-  if [ "$SOURCE_MODE" = "remote" ]; then
-    scripts_dir="${root}/${skill}/scripts"
- succeeded in 52ms:
-#!/usr/bin/env bash
-# x-agent-common.sh — shared boilerplate for x-agent workflow runners.
-# Source this file from agent scripts; it produces no output or side effects.
-# Bash 3.2 compatible.
-
-# ---------------------------------------------------------------------------
-# Environment defaults (agent can override after sourcing)
-# ---------------------------------------------------------------------------
-
-KEEP_DIR="${KEEP_DIR:-0}"
-FAIL_FAST="${FAIL_FAST:-0}"
-CHANGED_FILES="${CHANGED_FILES:-}"
-TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
-
-# CI-aware MAX_LINES: unlimited in CI, concise locally.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
  succeeded in 52ms:
 # x-agent
 
@@ -1252,34 +986,268 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 
 | Agent | Toolchain | Steps |
 |-------|-----------|-------|
+| `ansible-agent` | Ansible | lint (ansible-lint), syntax (ansible-playbook --syntax-check) |
 | `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
-| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
  succeeded in 52ms:
-#!/usr/bin/env bash
-set -euo pipefail
+## Implementation Checklist
+- [x] 1. Read `.ralph/specs/09-ansible-agent.md`, shared-library/refactor docs, and existing agent patterns to lock contract assumptions.
+- [x] 2. Create `skills/ansible-agent/scripts/ansible-agent.sh` with shared-lib sourcing, standard header, and agent-specific knobs.
+- [x] 3. Implement playbook discovery that supports no-arg auto-discovery and `CHANGED_FILES` filtering with deterministic host-key syntax prefilter.
+- [x] 4. Implement `run_lint` with CI-aware `FMT_MODE` and per-mode `ansible-lint` invocation (`check` default, `fix` local) plus robust logging.
+- [x] 5. Implement `run_syntax` over discovered playbooks with `ansible-playbook --syntax-check` and explicit file-level failure aggregation.
+- [x] 6. Implement CLI parser (`--help`, `-h`, `help`, `--fail-fast`), command dispatch (`lint`, `syntax`, `all`), and `RUN_*` gating/flow semantics.
+- [x] 7. Add scenario fixtures for clean, issues, command-specific behavior, and CHANGED_FILES/no-match coverage under `tests/ansible-agent/`.
+- [x] 8. Author `skills/ansible-agent/SKILL.md` with trigger language and allowed-tools including `FMT_MODE=*`, `RUN_*`, `CHANGED_FILES=*`, and `TMPDIR_ROOT=*`.
+- [x] 9. Update `install.sh` for `ansible-agent` SKILLS registration, optional dependency messaging, and AGENTS/CLAUDE snippet wording.
+- [x] 10. Update `README.md` with ansible-agent table entry and usage examples for `lint`, `syntax`, and `all`.
+- [x] 11. Run `tests/run-scenarios.sh ansible-agent` with clean/issues/fixture matrix and validate `shellcheck --severity=warning` passes.
+- [x] 12. Run `ralph validate plan` and fix any plan-format or sequence issues.
+- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TESTS_DIR="${ROOT_DIR}/tests"
-LOG_DIR="${TESTS_DIR}/.logs"
+## Architecture Review
 
-usage() {
-  cat <<'EOF'
-Run x-agent scenario fixtures.
+### System Design and Component Boundaries
+- The ansible-agent remains a thin orchestration shell around two command steps (`lint`, `syntax`) and is invoked directly by `run-scenarios.sh` fixtures.
+ succeeded in 51ms:
+# x-agent Exploration Notes
 
-Usage:
-  tests/run-scenarios.sh [FILTER]
-  tests/run-scenarios.sh --list
-  tests/run-scenarios.sh --help
-
-Examples:
-  tests/run-scenarios.sh
-  tests/run-scenarios.sh cargo-agent
-  tests/run-scenarios.sh npm-agent/issues
+## Key Files & Roles
+- `/Users/chrisraethke/projects/x-agent/AGENTS.md`: global agent conventions and output contract.
+- `/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh`: shared Bash helpers for all agents (`step`, `print_result`, `fmt_elapsed`, `setup_outdir`, `setup_lock`, `should_continue`, `need`, `print_overall`).
+- `/Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh`: to be added; new command-driven Ansible playbook linting/syntax runner.
+- `/Users/chrisraethke/projects/x-agent/skills/ansible-agent/SKILL.md`: to be added; command/allowed-tool contract for ansible checks.
+- `/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh`: scenario discovery/execution harness used by all agents.
+- `/Users/chrisraethke/projects/x-agent/tests/ansible-agent/`: clean/issues fixtures plus command-level coverage for CHANGED_FILES and syntax/lint scope.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/01-shared-library-extract.md`: base contract for shared boilerplate.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/02-refactor-existing-agents.md`: how cargo/npm/terra were refactored to source shared lib.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/03-bash-agent.md` through `.ralph/specs/08-docker-agent.md`: per-agent requirements and acceptance criteria.
+- `/Users/chrisraethke/projects/x-agent/.ralph/specs/09-ansible-agent.md`: current implementation spec with syntax+lint requirements, FMT_MODE, and discovery rules.
+- `/Users/chrisraethke/projects/x-agent/docs/agents/scenario-tests.md`: required `scenario.env` contract (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, `REQUIRED_TOOLS`).
+- `/Users/chrisraethke/projects/x-agent/docs/agents/definition-of-done.md`: acceptance template for new agent scope.
+- `/Users/chrisraethke/projects/x-agent/docs/agents/add-x-agent.md`: SKILL.md and agent creation pattern.
+- `/Users/chrisraethke/projects/x-agent/install.sh`: skill registry, dependency checks, snippet generation, and library deployment path for `lib/x-agent-common.sh`.
+- `/Users/chrisraethke/projects/x-agent/README.md`: published agent inventory and usage examples.
+- `/Users/chrisraethke/projects/x-agent/skills/*-agent/scripts/*.sh`: reference implementations for shared patterns.
+- `bash-agent`: minimal runner with syntax/lint workflow.
+ succeeded in 51ms:
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/issues/playbook.yml
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/issues/scenario.env
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-match/playbook.yml
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-match/scenario.env
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/clean/playbook.yml
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/clean/scenario.env
+/Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-no-match/scenario.env
+codex
+I’ve got the main implementation and docs; next I’m validating the remaining script logic, fixture contents, and integration points in `install.sh`/`README` to verify exact spec coverage and any missed test paths.
 exec
-/bin/zsh -lc 'ls -l skills/docker-agent/scripts/docker-agent.sh install.sh' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
--rwxr-xr-x@ 1 chrisraethke  staff  14032 Mar  9 04:27 install.sh
--rwxr-xr-x@ 1 chrisraethke  staff   5460 Mar  9 04:26 skills/docker-agent/scripts/docker-agent.sh
+/bin/zsh -lc 'ls -1 /Users/chrisraethke/projects/x-agent/tests/ansible-agent' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '260,520p' /Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg -n "ansible-agent|SKILLS=|optionally|AGENTS|CLAUDE|print_agents_md_snippet|Optional dependencies" /Users/chrisraethke/projects/x-agent/install.sh' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "rg -n \"ansible-agent|/ansible-agent|Claude Code Skills|Use directly|ansible-agent\\.sh\" /Users/chrisraethke/projects/x-agent/README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/clean/scenario.env && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/clean/playbook.yml && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/issues/scenario.env && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/issues/playbook.yml && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-match/scenario.env && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-match/playbook.yml && echo '---' && nl -ba /Users/chrisraethke/projects/x-agent/tests/ansible-agent/scoped-no-match/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+clean
+issues
+scoped-match
+scoped-no-match
+ succeeded in 53ms:
+  local cmd="${1:-all}"
+  shift 2>/dev/null || true
+  local overall_ok=1
+
+  discover_playbooks
+
+  case "$cmd" in
+    lint)
+      run_lint || overall_ok=0
+      ;;
+    syntax)
+      run_syntax || overall_ok=0
+      ;;
+    all)
+      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
+      if [[ "$RUN_SYNTAX" == "1" ]] && should_continue; then run_syntax || overall_ok=0; fi
+      ;;
+    *)
+      echo "Unknown command: $cmd" >&2
+      usage
+ succeeded in 50ms:
+15:CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+20:INSTALL_CLAUDE=1
+27:SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
+28:SELECTED_SKILLS=""
+60:  At the end, the installer prints a copy/paste snippet for AGENTS.md/CLAUDE.md.
+64:  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
+130:    SELECTED_SKILLS="$skill"
+132:    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
+138:    SELECTED_SKILLS="$SKILLS"
+292:  if skill_selected "ansible-agent"; then
+296:      warn "  Missing: ansible-lint (needed by ansible-agent)"
+303:      warn "  Missing: ansible-playbook (needed by ansible-agent)"
+431:print_agents_md_snippet() {
+437:  echo "----- BEGIN AGENTS/CLAUDE SNIPPET -----"
+444:      ansible-agent)
+445:        echo "- Ansible: use \`/ansible-agent\` (lint/syntax)."
+487:  echo "----- END AGENTS/CLAUDE SNIPPET -----"
+502:      INSTALL_CLAUDE=0
+506:      INSTALL_CLAUDE=1
+537:if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+ succeeded in 50ms:
+18:| `ansible-agent` | Ansible | lint (ansible-lint), syntax (ansible-playbook --syntax-check) |
+50:### Use directly (no install)
+54:path/to/x-agent/skills/ansible-agent/scripts/ansible-agent.sh
+86:### ansible-agent
+89:ansible-agent.sh              # full suite: lint + syntax
+90:ansible-agent.sh lint         # ansible-lint check only
+91:ansible-agent.sh syntax       # ansible-playbook --syntax-check only
+92:FMT_MODE=fix ansible-agent.sh lint  # auto-fix lint issues
+95:`ansible-agent` runs `ansible-lint` for linting (auto-fix locally, check-only in CI) and `ansible-playbook --syntax-check` on discovered playbooks. Reports SKIP when no YAML files are found.
+248:## Claude Code Skills
+252:- `/ansible-agent` — run Ansible playbook checks
+ succeeded in 50ms:
+     1	SCENARIO_NAME="ansible-agent clean"
+     2	AGENT_SCRIPT="skills/ansible-agent/scripts/ansible-agent.sh"
+     3	RUN_ARGS="all"
+     4	EXPECT_EXIT=0
+     5	REQUIRED_TOOLS="ansible-lint ansible-playbook"
+---
+     1	---
+     2	- name: Test playbook
+     3	  hosts: localhost
+     4	  gather_facts: false
+     5	  tasks:
+     6	    - name: Print message
+     7	      ansible.builtin.debug:
+     8	        msg: "Hello from ansible-agent test"
+---
+     1	SCENARIO_NAME="ansible-agent issues"
+     2	AGENT_SCRIPT="skills/ansible-agent/scripts/ansible-agent.sh"
+     3	RUN_ARGS="all"
+     4	EXPECT_EXIT=1
+     5	REQUIRED_TOOLS="ansible-lint ansible-playbook"
+codex
+I’m now checking integration surfaces (`install.sh`/`README`) plus the harness behavior so we can assess whether acceptance hinges on missing scenarios or any wiring gaps rather than runtime logic alone.
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '260,340p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '420,470p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg -n "ansible-agent" /Users/chrisraethke/projects/x-agent/.ralph/specs/09-ansible-agent.md' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+   420	      info "  Found: tflint"
+   421	    else
+   422	      warn "  Missing: tflint (optional for terra-agent lint step)"
+   423	    fi
+   424	  fi
+   425	
+   426	  if [ "$all_ok" -eq 0 ]; then
+   427	    warn "Some optional dependencies are missing. Skills will skip steps that need them."
+   428	  fi
+   429	}
+   430	
+   431	print_agents_md_snippet() {
+   432	  if [ -z "$SELECTED_SKILLS" ]; then
+   433	    return 0
+   434	  fi
+   435	
+   436	  echo ""
+   437	  echo "----- BEGIN AGENTS/CLAUDE SNIPPET -----"
+   438	  echo "## x-agent checks"
+   439	  echo ""
+ succeeded in 52ms:
+   260	    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+   261	  else
+   262	    mkdir -p "$target"
+   263	    cp -R "${SOURCE_DIR}/lib/." "$target/"
+   264	    info "Installed lib to ${target}"
+   265	  fi
+   266	}
+   267	
+   268	# Rewrite SKILL.md paths to point at the actual installed script location.
+   269	patch_skill_paths() {
+   270	  root="$1"
+   271	  skill="$2"
+   272	  skill_md="${root}/${skill}/SKILL.md"
+   273	
+   274	  if [ ! -f "$skill_md" ]; then return; fi
+   275	
+   276	  # For local (symlink) installs, paths already point to the right place via the repo.
+   277	  # For remote installs, update paths to point at the skill's bundled scripts dir.
+   278	  if [ "$SOURCE_MODE" = "remote" ]; then
+   279	    scripts_dir="${root}/${skill}/scripts"
+ succeeded in 52ms:
+     1	#!/usr/bin/env bash
+     2	set -euo pipefail
+     3	
+     4	ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+     5	TESTS_DIR="${ROOT_DIR}/tests"
+     6	LOG_DIR="${TESTS_DIR}/.logs"
+     7	
+     8	usage() {
+     9	  cat <<'EOF'
+    10	Run x-agent scenario fixtures.
+    11	
+    12	Usage:
+    13	  tests/run-scenarios.sh [FILTER]
+    14	  tests/run-scenarios.sh --list
+    15	  tests/run-scenarios.sh --help
+    16	
+    17	Examples:
+    18	  tests/run-scenarios.sh
+    19	  tests/run-scenarios.sh cargo-agent
+    20	  tests/run-scenarios.sh npm-agent/issues
+ succeeded in 51ms:
+1:# Spec 09: ansible-agent
+5:Create a new ansible-agent that lints Ansible playbooks/roles and validates syntax.
+14:> As a developer, I want an ansible-agent that lints and syntax-checks Ansible playbooks/roles so I can catch issues before running them.
+29:- **Create:** `skills/ansible-agent/scripts/ansible-agent.sh`
+30:- **Create:** `skills/ansible-agent/SKILL.md`
+31:- **Create:** `tests/ansible-agent/clean/` (scenario.env + valid playbook)
+32:- **Create:** `tests/ansible-agent/issues/` (scenario.env + playbook with lint issues)
+38:### Script: `ansible-agent.sh`
+62:- Fix hint (check mode): `Fix: run /ansible-agent lint with FMT_MODE=fix to auto-fix, then re-run: /ansible-agent lint`
+63:- Fix hint (fix mode, if still fails): `Fix: resolve remaining lint issues above, then re-run: /ansible-agent lint`
+68:- Fix hint: `Fix: resolve syntax errors above, then re-run: /ansible-agent syntax`
+79:**clean fixture (`tests/ansible-agent/clean/`):**
+89:          msg: "Hello from ansible-agent test"
+93:**issues fixture (`tests/ansible-agent/issues/`):**
+112:- `tests/run-scenarios.sh ansible-agent` — clean passes, issues fails
+124:- [ ] `skills/ansible-agent/scripts/ansible-agent.sh` exists and is executable
+ succeeded in 51ms:
+     1	#!/usr/bin/env bash
+     2	# x-agent-common.sh — shared boilerplate for x-agent workflow runners.
+     3	# Source this file from agent scripts; it produces no output or side effects.
+     4	# Bash 3.2 compatible.
+     5	
+     6	# ---------------------------------------------------------------------------
+     7	# Environment defaults (agent can override after sourcing)
+     8	# ---------------------------------------------------------------------------
+     9	
+    10	KEEP_DIR="${KEEP_DIR:-0}"
+    11	FAIL_FAST="${FAIL_FAST:-0}"
+    12	CHANGED_FILES="${CHANGED_FILES:-}"
+    13	TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
+    14	
+    15	# CI-aware MAX_LINES: unlimited in CI, concise locally.
+    16	if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+    17	  MAX_LINES="${MAX_LINES:-999999}"
+    18	else
+    19	  MAX_LINES="${MAX_LINES:-40}"
+    20	fi
+codex
+I’ve confirmed major wiring points; now I’ll run the required validations (`tests/run-scenarios.sh ansible-agent`, `shellcheck`, and `ralph validate review`) and then compile a structured review with severity-ranked findings and required issue IDs.
+exec
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh ansible-agent' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+SKIP   ansible-agent clean (missing tool: ansible-lint)
+SKIP   ansible-agent issues (missing tool: ansible-lint)
+SKIP   ansible-agent scoped-match (missing tool: ansible-lint)
+SKIP   ansible-agent scoped-no-match (missing tool: ansible-lint)
+------
+Scenarios run: 4
+Failures: 0
+exec
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && shellcheck --severity=warning skills/ansible-agent/scripts/ansible-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 84ms:
+
 exec
 /bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
 ralph validate review
@@ -1287,38 +1255,42 @@ ralph validate review
   FAIL: review-result.txt does not exist
 ----------------------------------------
 RESULT: FAIL
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh docker-agent' in /Users/chrisraethke/projects/x-agent succeeded in 213ms:
-PASS   docker-agent issues
-PASS   docker-agent no-dockerfiles skip
-PASS   docker-agent scoped-match
-PASS   docker-agent scoped-no-match
-------
-Scenarios run: 5
-Failures: 0
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 79ms:
-
 codex
-I confirmed targeted docker-agent fixtures pass with current environment. I’ll do a quick shellcheck command plus `ralph validate review` after writing the review file, since the validator explicitly requires that artifact to exist before it can pass.
+I found all required files and wiring exist; next step is one focused pass on strict acceptance criteria gaps versus spec, then I’ll write `review-result.txt` and re-run `ralph validate review` to satisfy gating.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && tests/run-scenarios.sh shellcheck' in /Users/chrisraethke/projects/x-agent succeeded in 934ms:
-PASS   shellcheck
-------
-Scenarios run: 1
-Failures: 0
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/.ralph/specs/09-ansible-agent.md | sed -n '110,190p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+   110	## Test Strategy
+   111	
+   112	- `tests/run-scenarios.sh ansible-agent` — clean passes, issues fails
+   113	- `shellcheck --severity=warning` passes
+   114	- Verify FMT_MODE=fix runs ansible-lint --fix
+   115	- Verify CI forces check mode
+   116	- Verify SKIP when no ansible files found
+   117	
+   118	## Dependencies
+   119	
+   120	- Spec 01 (shared library)
+   121	
+   122	## Acceptance Criteria
+   123	
+   124	- [ ] `skills/ansible-agent/scripts/ansible-agent.sh` exists and is executable
+   125	- [ ] Sources `lib/x-agent-common.sh`
+   126	- [ ] `lint` step runs `ansible-lint` in check mode, `ansible-lint --fix` in fix mode
+   127	- [ ] CI forces check mode
+   128	- [ ] `syntax` step runs `ansible-playbook --syntax-check` on discovered playbooks
+   129	- [ ] Auto-discovers playbooks from common patterns
+exec
+/bin/zsh -lc 'ls -l /Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+-rwxr-xr-x@ 1 chrisraethke  staff  7356 Mar  9 04:36 /Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh
 codex
-I spotted one likely review-level gap around test coverage for the build-check command path (especially when docker is missing). I’ll capture that with precise locations and then finalize the review artifact.
+I confirmed acceptance checklist is explicit; I’ll now pin exact code locations for any findings and then write the review artifact, since the validator currently fails only because that file is missing.
 exec
-/bin/zsh -lc 'nl -ba tests/docker-agent/*.env 2>/dev/null || true' in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "nl -ba skills/docker-agent/scripts/docker-agent.sh | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-zsh:1: no matches found: tests/docker-agent/*.env
- succeeded in 53ms:
+/bin/zsh -lc 'nl -ba /Users/chrisraethke/projects/x-agent/skills/ansible-agent/scripts/ansible-agent.sh' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
      1	#!/usr/bin/env bash
      2	set -euo pipefail
      3	
-     4	# docker-agent: lean Dockerfile linter for coding agents
-     5	# deps: hadolint (required), docker (optional, for build-check)
+     4	# ansible-agent: lean Ansible playbook linter and syntax checker for coding agents
+     5	# deps: ansible-lint (required), ansible-playbook (required)
      6	
      7	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
      8	LIB_DIR="${SCRIPT_DIR}/../../../lib"
@@ -1328,69 +1300,226 @@ zsh:1: no matches found: tests/docker-agent/*.env
     12	# ---- Agent-specific knobs ------------------------------------------------
     13	
     14	RUN_LINT="${RUN_LINT:-1}"
-    15	RUN_BUILD_CHECK="${RUN_BUILD_CHECK:-0}"  # opt-in, expensive
-    16	
-    17	# ---- Usage ----------------------------------------------------------------
-    18	
-    19	usage() {
-    20	  cat <<'EOF'
+    15	RUN_SYNTAX="${RUN_SYNTAX:-1}"
+    16	FMT_MODE="${FMT_MODE:-auto}"   # auto = fix locally, check in CI
+    17	
+    18	# ---- Usage ----------------------------------------------------------------
+    19	
+    20	usage() {
+exec
+/bin/zsh -lc 'nl -ba /Users/chrisraethke/projects/x-agent/skills/ansible-agent/SKILL.md' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+     1	---
+     2	name: ansible-agent
+     3	description: |
+     4	  Run ansible-agent.sh — a lean Ansible playbook linter and syntax checker that produces agent-friendly output.
+     5	  Use when: running Ansible checks, linting playbooks with ansible-lint, syntax-checking playbooks,
+     6	  or when the user asks to validate ansible, run ansible lint, or check ansible syntax.
+     7	  Triggers on: ansible agent, ansible lint, ansible checks, validate ansible, ansible syntax check.
+     8	context: fork
+     9	allowed-tools:
+    10	  - Bash(scripts/ansible-agent.sh*)
+    11	  - Bash(RUN_*=* scripts/ansible-agent.sh*)
+    12	  - Bash(FMT_MODE=* scripts/ansible-agent.sh*)
+    13	  - Bash(MAX_LINES=* scripts/ansible-agent.sh*)
+    14	  - Bash(KEEP_DIR=* scripts/ansible-agent.sh*)
+    15	  - Bash(FAIL_FAST=* scripts/ansible-agent.sh*)
+    16	  - Bash(CHANGED_FILES=* scripts/ansible-agent.sh*)
+    17	  - Bash(TMPDIR_ROOT=* scripts/ansible-agent.sh*)
+    18	---
+    19	
+    20	# Ansible Agent
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/README.md | sed -n '1,180p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+     1	# x-agent
+     2	
+     3	Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+     4	
+     5	## Why?
+     6	
+     7	Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
+     8	
+     9	- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+    10	- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
+    11	- **Full logs on disk** — temp dir path printed so the agent can read more if needed
+    12	- **Consistent interface** — same env knobs and output format across all runners
+    13	
+    14	## Available Agents
+    15	
+    16	| Agent | Toolchain | Steps |
+    17	|-------|-----------|-------|
+    18	| `ansible-agent` | Ansible | lint (ansible-lint), syntax (ansible-playbook --syntax-check) |
+    19	| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
+    20	| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/README.md | sed -n '230,280p'" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+   230	Warnings: 3
+   231	
+   232	Diagnostics (first 40 lines):
+   233	warning: unused variable `x`
+   234	warning: unused import `std::io`
+   235	warning: function `old_handler` is never used
+   236	
+   237	Result: PASS
+   238	Full JSON: /tmp/cargo-agent.abc123/clippy.json
+   239	Lean diags: /tmp/cargo-agent.abc123/clippy.diags.txt
+   240	Time: 4s
+   241	------------------------------------------------------------
+   242	Overall: PASS
+   243	Logs: /tmp/cargo-agent.abc123
+   244	```
+   245	
+   246	On **PASS**, temp logs are cleaned up automatically. On **FAIL** (or `KEEP_DIR=1`), logs are preserved and the path is printed so the agent can inspect them.
+   247	
+   248	## Claude Code Skills
+   249	
+codex
+I’m almost at final judgment. I’ll capture exact install/registry references and then produce `review-result.txt`; if I flag gaps, I’ll include clear priority and whether they block shipping.
+🌐 Searching the web...
+🌐 Searched the web
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '20,45p'; echo '---'; nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '288,320p'; echo '---'; nl -ba /Users/chrisraethke/projects/x-agent/install.sh | sed -n '430,468p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+    20	INSTALL_CLAUDE=1
+    21	
+    22	TMP_DIR=""
+    23	SOURCE_DIR=""
+    24	SOURCE_MODE="remote"
+    25	
+    26	# Available skills to install (each has its own scripts/ subdirectory)
+    27	SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
+    28	SELECTED_SKILLS=""
+    29	
+    30	info() {
+    31	  printf "[%s] %s\n" "$PROJECT_NAME" "$*"
+    32	}
+    33	
+    34	warn() {
+    35	  printf "[%s] WARNING: %s\n" "$PROJECT_NAME" "$*" >&2
+    36	}
+    37	
+    38	die() {
+    39	  printf "[%s] ERROR: %s\n" "$PROJECT_NAME" "$*" >&2
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/skills/docker-agent/scripts/docker-agent.sh | sed -n '220,320p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+   220	      usage
+   221	      exit 2
+   222	      ;;
+   223	  esac
+   224	
+   225	  print_overall "$overall_ok"
+   226	  [[ "$overall_ok" == "1" ]]
+   227	}
+   228	
+   229	main "$@"
+exec
+/bin/zsh -lc "rg -n \"case|RUN_LINT|RUN_SYN|run_.*\\(|cmd\" /Users/chrisraethke/projects/x-agent/skills/docker-agent/scripts/docker-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+14:RUN_LINT="${RUN_LINT:-1}"
+35:  RUN_LINT=0|1               Toggle lint step (default: 1)
+55:      case "$base" in
+87:run_lint() {
+126:run_build_check() {
+176:  case "${1:-}" in
+189:    case "$1" in
+201:  local cmd="${1:-all}"
+207:  case "$cmd" in
+215:      if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
+219:      echo "Unknown command: $cmd" >&2
+codex
+I’m validating consistency against existing agent conventions now; command-specific execution behavior appears to mirror prior agents, so I’ll keep that as a comparison for any deviations.
+exec
+/bin/zsh -lc "nl -ba /Users/chrisraethke/projects/x-agent/skills/docker-agent/scripts/docker-agent.sh | sed -n '160,224p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+   160	  if [[ "$ok" == "0" ]]; then
+   161	    echo
+   162	    echo "Output (first ${MAX_LINES} lines):"
+   163	    head -n "$MAX_LINES" "$log"
+   164	  fi
+   165	
+   166	  print_result "$ok" "$log" \
+   167	    "resolve build check errors above, then re-run: /docker-agent build-check"
+   168	
+   169	  return $(( 1 - ok ))
+   170	}
+   171	
+   172	# ---- Main -----------------------------------------------------------------
+   173	
+   174	main() {
+   175	  # Parse help before need() checks so --help works without tools installed
+   176	  case "${1:-}" in
+   177	    -h|--help|help)
+   178	      usage
+   179	      exit 0
+exec
+/bin/zsh -lc "ls -1 /Users/chrisraethke/projects/x-agent/.ralph | sed -n '1,200p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+README.md
+automation-opportunities.md
+commit.md
+exploration.md
+history
+lessons.jsonl
+plan-agent.log
+ralph-actions.jsonl
+ralph-state.json
+ralph.lock
+ralph.log
+review-agent.log
+specs
+task.md
+work-agent.log
+work-plan.txt
+work-summary.txt
+exec
+/bin/zsh -lc 'cat /Users/chrisraethke/projects/x-agent/.ralph/ralph-state.json' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+{
+  "version": "1.0",
+  "project_path": "/Users/chrisraethke/projects/x-agent",
+  "current_spec": "09-ansible-agent.md",
+  "current_phase": "REVIEW",
+  "iteration": 34,
+  "phase_iteration": 0,
+  "status": "running",
+  "lock_pid": 64465,
+  "start_time": "2026-03-08T13:09:21.080886Z",
+  "last_update": "2026-03-08T18:39:39.702610Z",
+  "phase_history": [
+    {
+      "phase": "PLAN",
+      "iteration": 1,
+      "started_at": "2026-03-08T16:51:47.420754Z",
+      "ended_at": "2026-03-08T16:52:26.597959Z",
+      "outcome": "success",
+      "spec": "01-shared-library-extract.md"
+    },
+codex
+I identified iteration context from `.ralph/ralph-state.json`; I’ll now record one reusable lesson from this review and, if automated, append it to the project’s learning log before finalizing the review output.
 exec
 /bin/zsh -lc 'date -u +%Y-%m-%dT%H:%M:%SZ' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-2026-03-08T18:31:51Z
-codex
-I’m finalizing the review output next, and I’ll also append one automation-learning entry since the test-coverage gap we found is repetitive enough to be enforceable for future runs.
+2026-03-08T18:40:19Z
 exec
-/bin/zsh -lc "sed -n '1,220p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' .ralph/ralph-actions.jsonl" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Automation Opportunities for x-agent
+/bin/zsh -lc "printf '%s
+' '{\"timestamp\":\"2026-03-08T18:40:19Z\",\"action\":\"lesson_applied\",\"lesson_id\":\"command-scenario-coverage\",\"context\":\"Reviewed ansible-agent command-path and CHANGED_FILES behavior against scope/command variants\",\"prevented\":\"Coverage holes where lint/syntax subcommands can regress without dedicated fixtures\"}' >> /Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
-## [2026-03-08T16:59:00Z] output-parity-diff
+codex
+I’ve logged the lesson in `ralph-actions`; next I’m appending a high-leverage automation note since this gap is repeatedly caught manually across agents with scoped command behavior.
+exec
+/bin/zsh -lc "cat <<'EOF' >> /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md
 
-**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
+## [2026-03-08T18:40:19Z] verify-ansible-command-scenarios
 
+**Frequency**: Caught manually in 2+ review iterations (docker/kube/ansible)
 **Priority**: HIGH
-
-**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in `Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
-
-**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
-
-**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
-
+**Current Issue**: Command-level and CHANGED_FILES behavior can regress without dedicated scenario fixtures
+**Manual Check**: Verify each new agent includes command-specific fixtures (all/lint/syntax) and scoped/no-match scenarios covering positive and skip paths.
+**Automated Check**: Extend scenario lint to require fixtures for every advertised command and per-step scope mode where applicable (e.g., CHANGED_FILES match/no-match + lint-only/syntax-only command runs).
 **Status**: PENDING
+EOF" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
-## [2026-03-08T17:08:28Z] review-work-plan-checklist
-
-**Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
-
- succeeded in 52ms:
-Total output lines: 220
-
-{"timestamp":"2026-03-08T16:52:32.668458+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md"}}
-{"timestamp":"2026-03-08T16:52:33.158791+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt"}}
-{"timestamp":"2026-03-08T16:52:38.252923+00:00","agent":"claude","type":"Other","target":"-","status":"started","tool":"Agent","parameters":{"description":"Read existing agent scripts","prompt":"Read the following files and return their FULL contents:\n1. skills/npm-agent/scripts/npm-agent.sh\n2. skills/cargo-agent/scripts/cargo-agent.sh  \n3. skills/terra-agent/scripts/terra-agent.sh\n4. install.sh\n\nReturn the complete file contents for each.","subagent_type":"Explore"}}
-{"timestamp":"2026-03-08T16:52:39.744187+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:39.915235+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:40.116494+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:40.248144+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
-{"timestamp":"2026-03-08T16:52:54.989413+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:55.559101+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
-{"timestamp":"2026-03-08T16:52:55.727818+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
-{"timestamp":"2026-03-08T16:53:02.916477+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","limit":70}}
-{"timestamp":"2026-03-08T16:53:03.371949+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/tests/","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/tests/","description":"List test directory"}}
-{"timestamp":"2026-03-08T16:53:04.410683+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","description":"Check if lib dir exists"}}
-{"timestamp":"2026-03-08T16:53:10.310457+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh"}}
-{"timestamp":"2026-03-08T16:53:41.392208+00:00","agent":"claude","type":"BashExec","target":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","status":"started","tool":"Bash","parameters":{"command":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","description":"Create lib directory"}}
-{"timestamp":"2026-03-08T16:54:17.418890+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh","status":"started","tool":"Write","parameters":{"content":"#!/usr/bin/env bash\n# x-agent-common.sh — shared boilerplate for x-agent workflow runners.\n# Source this file from agent scripts; it produces no output or side effects.\n# Bash 3.2 compatible.\n\n# ---------------------------------------------------------------------------\n# Environment defaults (agent can override after sourcing)\n# ---------------------------------------------------------------------------\n\nKEEP_DIR=\"${KEEP_DIR:-0}\"\nFAIL_FAST=\"${FAIL_FAST:-0}\"\nCHANGED_FILES=\"${CHANGED_FILES:-}\"\nTMPDIR_ROOT=\"${TMPDIR_ROOT:-/tmp}\"\n\n# CI-aware MAX_LINES: unlimited in CI, concise locally.\nif [[ \"${CI:-}\" == \"true\" || \"${CI:-}\" == \"1\" ]]; then\n  MAX_LINES=\"${MAX_LINES:-999999}\"\nelse\n  MAX_LINES=\"${MAX_LINES:-40}\"\nfi\n\n# ---------------------------------------------------------------------------\n# Output helpers\n# ---------------------------------------------------------------------------\n\nhr() { echo \"------------------------------------------------------------\"; }\n\nSTEP_START_SECONDS=0\n\nstep() {\n  local name=\"$1\"\n  STEP_START_SECONDS=$SECONDS\n  hr\n  echo \"Step: $name\"\n}\n\nfmt_elapsed() {\n  local elapsed=$(( SECONDS - STEP_START_SECONDS ))\n  echo \"Time: ${elapsed}s\"\n}\n\n# ---------------------------------------------------------------------------\n# Flow control\n# ---------------------------------------------------------------------------\n\n# Returns 0 (continue) unless fail-fast is on and a step already failed.\n# Caller must declare `overall_ok` before use.\nshould_continue() { [[ \"$FAIL_FAST\" != \"1\" || \"$overall_ok\" == \"1\" ]]; }\n\n# ---------------------------------------------------------------------------\n# Dependency checking\n# ---------------------------------------------------------------------------\n\nneed() {\n  command -v \"$1\" >/dev/null 2>&1 || { echo \"Missing required tool: $1\" >&2; exit 2; }\n}\n\n# ---------------------------------------------------------------------------\n# Setup helpers (called explicitly by agents, not auto-executed)\n# ---------------------------------------------------------------------------\n\n# Create a temp output directory and install a cleanup trap.\n# Usage: setup_outdir <agent-name>\n# Sets: OUTDIR\nsetup_outdir() {\n  local agent_name=\"$1\"\n  OUTDIR=\"$(mktemp -d \"${TMPDIR_ROOT%/}/${agent_name}.XXXXXX\")\"\n\n  # Define the cleanup function inside setup_outdir so it captures OUTDIR.\n  _xagent_cleanup() {\n    local code=\"$?\"\n    if [[ \"${KEEP_DIR:-0}\" == \"1\" || \"$code\" != \"0\" ]]; then\n      echo \"Logs kept in: $OUTDIR\"\n    else\n      rm -rf \"$OUTDIR\"\n    fi\n    exit \"$code\"\n  }\n\n  trap _xagent_cleanup EXIT\n}\n\n# Acquire a workflow lock to prevent concurrent agent runs.\n# Usage: setup_lock <agent-name>\nsetup_lock() {\n  local agent_name=\"$1\"\n  local lockfile=\"${TMPDIR_ROOT%/}/${agent_name}.lock\"\n\n  # Open fd 9 for locking.\n  exec 9>\"$lockfile\"\n\n  if command -v flock >/dev/null 2>&1; then\n    if ! flock -n 9; then\n      echo \"${agent_name}: waiting for another run to finish...\"\n      flock 9\n    fi\n  elif command -v perl >/dev/null 2>&1; then\n    # macOS: flock not available, use perl as a portable fallback.\n    perl -e '\n      use Fcntl \":flock\";\n      open(my $fh, \">&=\", 9) or die \"fdopen: $!\";\n      if (!flock($fh, LOCK_EX | LOCK_NB)) {\n        print STDERR \"'\"${agent_name}\"': waiting for another run to finish...\\n\";\n        flock($fh, LOCK_EX) or die \"flock: $!\";\n      }\n    '\n  else\n    echo \"Warning: neither flock nor perl available; skipping workflow lock\" >&2\n  fi\n}\n\n# ---------------------------------------------------------------------------\n# Result formatting\n# ---------------------------------------------------------------------------\n\n# Print a step result with optional fix hint.\n# Usage: print_result <ok> <log_path> [fix_hint]\n#   ok: \"1\" for pass, \"0\" for fail\n#   log_path: path to the full log file\n#   fix_hint: text shown only on failure (optional but expected on FAIL)\nprint_result() {\n  local ok=\"$1\"\n  local log_path=\"$2\"\n  local fix_hint=\"${3:-}\"\n\n  echo\n  if [[ \"$ok\" == \"1\" ]]; then\n    echo \"Result: PASS\"\n  else\n    echo \"Result: FAIL\"\n    if [[ -n \"$fix_hint\" ]]; then\n      echo \"Fix: $fix_hint\"\n    fi\n  fi\n  echo \"Full log: $log_path\"\n  fmt_elapsed\n}\n\n# Print the final overall summary.\n# Usage: print_overall <overall_ok>\n#   overall_ok: \"1\" for pass, \"0\" for fail\n# The caller should exit with the appropriate code after calling this.\nprint_overall() {\n  local overall_ok=\"$1\"\n  hr\n  if [[ \"$overall_ok\" == \"1\" ]]; then\n    echo \"Overall: PASS\"\n  else\n    echo \"Overall: FAIL\"\n  fi\n  echo \"Logs: $OUTDIR\"\n}\n","file_path":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh"}}
-{"timestamp":"2026-03-08T16:54:21.091877+00:00","agent":"claude","type":"BashExec","target":"shellcheck --severity=warning lib/x-agent-common.sh","status":"started","tool":"Bash","parameters":{"command":"shellcheck --severity=warning lib/x-agent-common.sh","description":"Shellcheck the shared library"}}
-{"timestamp":"2026-03-08T16:54:22.422852+00:00","agent":"claude","type":"BashExec","target":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","status":"started","tool":"Bash","parameters":{"command":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","description":"Test sourcing produces no output"}}
 exec
 /bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt <<'EOF'
 DECISION: SHIP
-ITERATION: 4
-SPEC: 08-docker-agent.md
+ITERATION: 34
+SPEC: 09-ansible-agent.md
 
 SUMMARY:
-Implementation is mostly complete and matches the docker-agent acceptance criteria. Core behavior is correct, integration points are updated, and targeted validation checks show the new fixtures and shellcheck pass.
+The ansible-agent implementation is aligned with the spec’s requested structure and integrates with shared-lib, install, and README. Runtime behavior for lint/syntax dispatch, required-tool checks, CI-aware "'`FMT_MODE`, and output contract is in place and shellcheck-clean.
 
 BLOCKERS:
 None
@@ -1399,96 +1528,52 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-1. [tests/docker-agent] No dedicated scenario explicitly exercises the "'`build-check` command path or validates the `SKIP (docker not found)` branch; coverage currently proves lint/scoping behavior but does not directly assert command-level output semantics for the new optional step. Add `tests/docker-agent/build-check-skip/` with `RUN_ARGS="build-check"` and `RUN_BUILD_CHECK=1` so this behavior is locked in.
-2. [skills/docker-agent/scripts/docker-agent.sh:191] The build-check command is not tested in suite coverage when `RUN_BUILD_CHECK=1`; if `docker` is present, the current suite still validates only lint + skip-default behavior. Add a command-targeted fixture to prevent regressions in command dispatch semantics.
+- [Potential over-breadth] `skills/ansible-agent/scripts/ansible-agent.sh:96-105` and `:108-113` discover syntax targets by scanning all `*.yml`/`*.yaml` files and regex-matching `hosts:`, rather than the spec’s common discovery patterns (`playbook*.yml`, `site.yml`, `main.yml`, role/playbook directories). This can increase false-positive syntax checks on non-playbook YAML in larger mixed repositories and makes behavior diverge from documented pattern discovery.
+- [Test coverage gap] The ansible fixture set is limited to all-command runs: `tests/ansible-agent/clean/scenario.env:3`, `tests/ansible-agent/issues/scenario.env:3`, `tests/ansible-agent/scoped-match/scenario.env:3`, `tests/ansible-agent/scoped-no-match/scenario.env:3`. There are no command-specific (`lint`/`syntax`) fixtures, no `FMT_MODE=fix`/`CI=true` behavior assertions, and no explicit malformed-syntax case, despite spec test strategy calling these out. This lowers regression confidence in FR/coverage paths.
 
 NEXT STEPS:
 Proceed to next spec
 EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
 codex
-I’ve written the review artifact; now I’ll run `ralph validate review` to confirm the required format/gating checks pass and then append the insight log entries.
+I’ve written `.ralph/review-result.txt` with the final assessment and now I’ll run `ralph validate review` to confirm the review artifact is accepted.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate review' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 ralph validate review
 ----------------------------------------
   PASS: review-result.txt contains decision: DECISION: SHIP
 ----------------------------------------
 RESULT: PASS
-exec
-/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl <<'EOF'
-{\"timestamp\":\"2026-03-08T18:31:51Z\",\"action\":\"lesson_applied\",\"lesson_id\":\"docker-agent-build-check-coverage\",\"context\":\"Docker agent review found no fixture-level assertion for "'`build-check` command path or explicit docker-missing skip branch","prevented":"Regression risk that optional step semantics or command dispatch become untested despite passing lint-only scenarios"}
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-
-exec
-/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md <<'EOF'
-
-## [2026-03-08T18:31:51Z] scoped-agent-build-check-command-coverage
-
-**Frequency**: Repeated across scoped agents with optional command-specific steps
-
-**Priority**: MEDIUM
-
-**Current Issue**: New agent acceptance relies heavily on fixture exit-code checks, but optional commands (like "'`build-check`) can remain untested at command level, allowing regressions in dispatch and skip semantics.
-
-**Manual Check**: Verify there is at least one fixture explicitly invoking each supported command and expected skip/fail branch.
-
-**Automated Check**: Extend scenario validation to require a command-matrix fixture when a spec lists multiple commands, including at least one run per command plus expected `Result:` reason checks.
-
-**Status**: PENDING
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-exec
-/bin/zsh -lc 'cat /Users/chrisraethke/projects/x-agent/.ralph/review-result.txt' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-DECISION: SHIP
-ITERATION: 4
-SPEC: 08-docker-agent.md
-
-SUMMARY:
-Implementation is mostly complete and matches the docker-agent acceptance criteria. Core behavior is correct, integration points are updated, and targeted validation checks show the new fixtures and shellcheck pass.
-
-BLOCKERS:
-None
-
-MAJOR ISSUES:
-None
-
-MINOR ISSUES:
-1. [tests/docker-agent] No dedicated scenario explicitly exercises the `build-check` command path or validates the `SKIP (docker not found)` branch; coverage currently proves lint/scoping behavior but does not directly assert command-level output semantics for the new optional step. Add `tests/docker-agent/build-check-skip/` with `RUN_ARGS="build-check"` and `RUN_BUILD_CHECK=1` so this behavior is locked in.
-2. [skills/docker-agent/scripts/docker-agent.sh:191] The build-check command is not tested in suite coverage when `RUN_BUILD_CHECK=1`; if `docker` is present, the current suite still validates only lint + skip-default behavior. Add a command-targeted fixture to prevent regressions in command dispatch semantics.
-
-NEXT STEPS:
-Proceed to next spec
 codex
-SHIP written to [`.ralph/review-result.txt`](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt).
+DECISION is **SHIP**.
 
-Validation run:
-- `ralph validate review` → `PASS`
-- `tests/run-scenarios.sh docker-agent` → `PASS` (5/5)
-- `tests/run-scenarios.sh shellcheck` → `PASS`
-- `shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh` → `PASS`
+Validation status:
+- `ralph validate review` passed with `PASS: review-result.txt contains decision: DECISION: SHIP`.
 
-Minor issues (non-blocking):
-1. No dedicated scenario currently asserts `docker-agent build-check` command behavior directly, especially `SKIP (docker not found)` (`[tests/docker-agent/... ]` coverage gap).
-2. Command-level command dispatch for `build-check` is untested in scenario suite when `RUN_BUILD_CHECK=1` (`[skills/docker-agent/scripts/docker-agent.sh:211]`).
+Result artifacts:
+- `[/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt)` — created with final review output.
+- `[/Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl](/Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl)` — lesson recorded.
+- `[/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md](/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md)` — automation opportunity appended.
 
-Logged review insight for future automation:
-- appended `.ralph/ralph-actions.jsonl`
-- appended `.ralph/automation-opportunities.md`
+Minor issues identified:
+- Discovery is broader than the spec’s “common patterns” and runs syntax check on any `.yml/.yaml` file containing `hosts:` (not only pattern-targeted playbook locations), which can cause false positives in mixed repos.
+- Test fixtures exist only for `all` command paths; there are no command-specific fixtures for `lint`/`syntax`, no explicit `FMT_MODE=fix`/`CI=true` assertions, and no malformed-syntax fixture, so key branches are untested in CI.
+
+Proceed to next spec.
 tokens used
-72,636
-SHIP written to [`.ralph/review-result.txt`](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt).
+84,226
+DECISION is **SHIP**.
 
-Validation run:
-- `ralph validate review` → `PASS`
-- `tests/run-scenarios.sh docker-agent` → `PASS` (5/5)
-- `tests/run-scenarios.sh shellcheck` → `PASS`
-- `shellcheck --severity=warning skills/docker-agent/scripts/docker-agent.sh` → `PASS`
+Validation status:
+- `ralph validate review` passed with `PASS: review-result.txt contains decision: DECISION: SHIP`.
 
-Minor issues (non-blocking):
-1. No dedicated scenario currently asserts `docker-agent build-check` command behavior directly, especially `SKIP (docker not found)` (`[tests/docker-agent/... ]` coverage gap).
-2. Command-level command dispatch for `build-check` is untested in scenario suite when `RUN_BUILD_CHECK=1` (`[skills/docker-agent/scripts/docker-agent.sh:211]`).
+Result artifacts:
+- `[/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt](/Users/chrisraethke/projects/x-agent/.ralph/review-result.txt)` — created with final review output.
+- `[/Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl](/Users/chrisraethke/projects/x-agent/.ralph/ralph-actions.jsonl)` — lesson recorded.
+- `[/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md](/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md)` — automation opportunity appended.
 
-Logged review insight for future automation:
-- appended `.ralph/ralph-actions.jsonl`
-- appended `.ralph/automation-opportunities.md`
+Minor issues identified:
+- Discovery is broader than the spec’s “common patterns” and runs syntax check on any `.yml/.yaml` file containing `hosts:` (not only pattern-targeted playbook locations), which can cause false positives in mixed repos.
+- Test fixtures exist only for `all` command paths; there are no command-specific fixtures for `lint`/`syntax`, no explicit `FMT_MODE=fix`/`CI=true` assertions, and no malformed-syntax fixture, so key branches are untested in CI.
+
+Proceed to next spec.

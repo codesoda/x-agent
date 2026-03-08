@@ -191,3 +191,12 @@
 **Automated Check**: Extend scenario validation to require a command-matrix fixture when a spec lists multiple commands, including at least one run per command plus expected `Result:` reason checks.
 
 **Status**: PENDING
+
+## [2026-03-08T18:40:19Z] verify-ansible-command-scenarios
+
+**Frequency**: Caught manually in 2+ review iterations (docker/kube/ansible)
+**Priority**: HIGH
+**Current Issue**: Command-level and CHANGED_FILES behavior can regress without dedicated scenario fixtures
+**Manual Check**: Verify each new agent includes command-specific fixtures (all/lint/syntax) and scoped/no-match scenarios covering positive and skip paths.
+**Automated Check**: Extend scenario lint to require fixtures for every advertised command and per-step scope mode where applicable (e.g., CHANGED_FILES match/no-match + lint-only/syntax-only command runs).
+**Status**: PENDING

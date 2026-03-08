@@ -24,7 +24,7 @@
 - `kube-agent`: validator fallback detection + CHANGED_FILES scoping + skip/fail behavior.
 - `docker-agent`: Dockerfile discovery (find-based) + hadolint lint + opt-in BuildKit build-check.
 - `npm-agent` and `terra-agent`: mature examples of required-tool handling and CI-aware behavior.
-- `ansible-agent`: implemented. Two-step runner (lint via `ansible-lint`, syntax via `ansible-playbook --syntax-check`). Recursive YAML discovery with `hosts:` prefilter for syntax targets. FMT_MODE=auto/check/fix with CI enforcement. CHANGED_FILES scoping: lint skips if no YAML changed; syntax scopes to changed playbooks only.
+- `ansible-agent`: planned (not yet implemented). Discovery is expected to blend filename heuristics (`playbook*.yml`, `site.yml`, `main.yml`) with role/playbook directory conventions and `hosts:`-presence filtering for syntax-check inputs.
 - `/Users/chrisraethke/projects/x-agent/tests/*-agent/*`: fixture directories for scenario-based validation.
   - Current pattern includes `clean/` and `issues/` plus scoped fixtures when behavior depends on `CHANGED_FILES`.
 

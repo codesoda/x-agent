@@ -1,18 +1,18 @@
 ## Implementation Checklist
-- [x] 1. Read `.ralph/specs/09-ansible-agent.md`, shared-library/refactor docs, and existing agent patterns to lock contract assumptions.
-- [x] 2. Create `skills/ansible-agent/scripts/ansible-agent.sh` with shared-lib sourcing, standard header, and agent-specific knobs.
-- [x] 3. Implement playbook discovery that supports no-arg auto-discovery and `CHANGED_FILES` filtering with deterministic host-key syntax prefilter.
-- [x] 4. Implement `run_lint` with CI-aware `FMT_MODE` and per-mode `ansible-lint` invocation (`check` default, `fix` local) plus robust logging.
-- [x] 5. Implement `run_syntax` over discovered playbooks with `ansible-playbook --syntax-check` and explicit file-level failure aggregation.
-- [x] 6. Implement CLI parser (`--help`, `-h`, `help`, `--fail-fast`), command dispatch (`lint`, `syntax`, `all`), and `RUN_*` gating/flow semantics.
-- [x] 7. Add scenario fixtures for clean, issues, command-specific behavior, and CHANGED_FILES/no-match coverage under `tests/ansible-agent/`.
-- [x] 8. Author `skills/ansible-agent/SKILL.md` with trigger language and allowed-tools including `FMT_MODE=*`, `RUN_*`, `CHANGED_FILES=*`, and `TMPDIR_ROOT=*`.
-- [x] 9. Update `install.sh` for `ansible-agent` SKILLS registration, optional dependency messaging, and AGENTS/CLAUDE snippet wording.
-- [x] 10. Update `README.md` with ansible-agent table entry and usage examples for `lint`, `syntax`, and `all`.
-- [x] 11. Run `tests/run-scenarios.sh ansible-agent` with clean/issues/fixture matrix and validate `shellcheck --severity=warning` passes.
-- [x] 12. Run `ralph validate plan` and fix any plan-format or sequence issues.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Read `.ralph/specs/09-ansible-agent.md`, shared-library/refactor docs, and existing agent patterns to lock contract assumptions.
+- [ ] 2. Create `skills/ansible-agent/scripts/ansible-agent.sh` with shared-lib sourcing, standard header, and agent-specific knobs.
+- [ ] 3. Implement playbook discovery that supports no-arg auto-discovery and `CHANGED_FILES` filtering with deterministic host-key syntax prefilter.
+- [ ] 4. Implement `run_lint` with CI-aware `FMT_MODE` and per-mode `ansible-lint` invocation (`check` default, `fix` local) plus robust logging.
+- [ ] 5. Implement `run_syntax` over discovered playbooks with `ansible-playbook --syntax-check` and explicit file-level failure aggregation.
+- [ ] 6. Implement CLI parser (`--help`, `-h`, `help`, `--fail-fast`), command dispatch (`lint`, `syntax`, `all`), and `RUN_*` gating/flow semantics.
+- [ ] 7. Add scenario fixtures for clean, issues, command-specific behavior, and CHANGED_FILES/no-match coverage under `tests/ansible-agent/`.
+- [ ] 8. Author `skills/ansible-agent/SKILL.md` with trigger language and allowed-tools including `FMT_MODE=*`, `RUN_*`, `CHANGED_FILES=*`, and `TMPDIR_ROOT=*`.
+- [ ] 9. Update `install.sh` for `ansible-agent` SKILLS registration, optional dependency messaging, and AGENTS/CLAUDE snippet wording.
+- [ ] 10. Update `README.md` with ansible-agent table entry and usage examples for `lint`, `syntax`, and `all`.
+- [ ] 11. Run `tests/run-scenarios.sh ansible-agent` with clean/issues/fixture matrix and validate `shellcheck --severity=warning` passes.
+- [ ] 12. Run `ralph validate plan` and fix any plan-format or sequence issues.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 

@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
+SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -289,6 +289,22 @@ check_optional_deps() {
   info "Checking optional dependencies..."
   all_ok=1
 
+  if skill_selected "ansible-agent"; then
+    if command -v ansible-lint >/dev/null 2>&1; then
+      info "  Found: ansible-lint"
+    else
+      warn "  Missing: ansible-lint (needed by ansible-agent)"
+      all_ok=0
+    fi
+
+    if command -v ansible-playbook >/dev/null 2>&1; then
+      info "  Found: ansible-playbook"
+    else
+      warn "  Missing: ansible-playbook (needed by ansible-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "bash-agent"; then
     if command -v shellcheck >/dev/null 2>&1; then
       info "  Found: shellcheck"
@@ -425,6 +441,9 @@ print_agents_md_snippet() {
 
   for skill in $SELECTED_SKILLS; do
     case "$skill" in
+      ansible-agent)
+        echo "- Ansible: use \`/ansible-agent\` (lint/syntax)."
+        ;;
       bash-agent)
         echo "- Bash/Shell: use \`/bash-agent\` (syntax/lint)."
         ;;

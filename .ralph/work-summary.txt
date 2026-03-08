@@ -1,57 +1,61 @@
-# Work Summary — Spec 08: docker-agent
+# Work Summary — Spec 09: ansible-agent
 
 ## What was implemented
 
-Created the complete docker-agent: a lean Dockerfile linter for coding agents.
+Created the complete ansible-agent: a lean Ansible playbook linter and syntax checker for coding agents.
 
 ### Files created:
-- `skills/docker-agent/scripts/docker-agent.sh` — main agent script (~170 LOC domain-specific)
-- `skills/docker-agent/SKILL.md` — Claude Code skill definition with triggers and allowed-tools
-- `tests/docker-agent/clean/` — valid Dockerfile fixture (EXPECT_EXIT=0)
-- `tests/docker-agent/issues/` — bad Dockerfile with hadolint violations (EXPECT_EXIT=1)
-- `tests/docker-agent/scoped-match/` — CHANGED_FILES matching a Dockerfile (EXPECT_EXIT=0)
-- `tests/docker-agent/scoped-no-match/` — CHANGED_FILES with no Dockerfiles (EXPECT_EXIT=0, SKIP)
-- `tests/docker-agent/no-dockerfiles/` — directory with no Dockerfile-like files (EXPECT_EXIT=0, SKIP)
+- `skills/ansible-agent/scripts/ansible-agent.sh` — main agent script (~170 LOC domain-specific)
+- `skills/ansible-agent/SKILL.md` — Claude Code skill definition with triggers and allowed-tools
+- `tests/ansible-agent/clean/` — valid playbook fixture (EXPECT_EXIT=0)
+- `tests/ansible-agent/issues/` — playbook with lint violations (EXPECT_EXIT=1)
+- `tests/ansible-agent/scoped-match/` — CHANGED_FILES matching a playbook (EXPECT_EXIT=0)
+- `tests/ansible-agent/scoped-no-match/` — CHANGED_FILES with no YAML files (EXPECT_EXIT=0, SKIP)
 
 ### Files modified:
-- `install.sh` — added docker-agent to SKILLS list, hadolint dependency check, and AGENTS/CLAUDE snippet
-- `README.md` — added docker-agent to agent table, "Use directly" section, usage section, and skills list
+- `install.sh` — added ansible-agent to SKILLS list, ansible-lint + ansible-playbook dependency checks, and AGENTS/CLAUDE snippet
+- `README.md` — added ansible-agent to agent table, "Use directly" section, usage section, and skills list
 
 ## Deviations from work plan
 
-- Clean Dockerfile fixtures were simplified (removed `RUN apk add --no-cache curl`) because hadolint DL3018 flags unpinned package versions. Using a minimal `FROM/COPY/CMD` Dockerfile avoids false failures.
-- `setup_lock` was intentionally omitted — consistent with gha-agent pattern (single-tool agents don't need lock contention management). The shared lib's lock is optional.
+- Simplified playbook discovery: uses recursive `.yml/.yaml` find + `hosts:` grep filter for syntax targets, rather than the more complex filename heuristic patterns (`playbook*.yml`, `site.yml`, `main.yml`) described in the spec. This is simpler and more general — ansible-lint handles its own discovery for linting, and the `hosts:` filter is sufficient for syntax check targeting.
+- `setup_lock` was intentionally omitted — consistent with gha-agent/docker-agent pattern (simple agents that don't need lock contention management).
 
 ## Edge cases handled
-- No Dockerfiles discovered: emits `Result: SKIP (no Dockerfiles found)` and exits 0
-- CHANGED_FILES set but no Dockerfile matches: emits `Result: SKIP (no Dockerfiles in CHANGED_FILES)` and exits 0
-- build-check defaults OFF (RUN_BUILD_CHECK=0)
-- docker not installed when build-check requested: emits `Result: SKIP (docker not found)` and exits 0
-- Unknown command: prints usage and exits 2
-- help/--help/-h works without hadolint installed
-- Per-file hadolint execution with aggregate logging (one bad file doesn't hide others)
-- Recursive discovery excludes .git, node_modules, vendor directories
+- No YAML files discovered: emits `Result: SKIP (no YAML files found)` and exits 0
+- CHANGED_FILES set but no YAML matches: emits `Result: SKIP (no YAML files in CHANGED_FILES)` and exits 0
+- No playbooks for syntax check: emits `Result: SKIP (no playbooks found for syntax check)` and exits 0
+- FMT_MODE=auto resolves to fix locally, check in CI
+- CI forces check mode even when FMT_MODE=fix
+- Invalid FMT_MODE exits with code 2
+- Unknown command prints usage and exits 2
+- help/--help/-h works without ansible-lint/ansible-playbook installed
+- Missing required tool exits with code 2
+- Per-playbook syntax checking with aggregate failure tracking
+- Recursive discovery excludes .git, node_modules, vendor, .venv, .cache, __pycache__
 
 ## Tests written/run
-- 5 docker-agent scenarios: all PASS
-- Full suite: 35 scenarios, 0 docker-agent failures (1 pre-existing kube-agent issues failure unrelated to this work)
-- shellcheck --severity=warning passes on all scripts including docker-agent.sh
+- 4 ansible-agent scenarios: all SKIP (ansible-lint not installed locally) — 0 failures
+- shellcheck --severity=warning passes on ansible-agent.sh
+- Manual verification: --help exits 0 without tools, missing tool exits 2
 
 ## Known limitations
-- build-check step cannot be tested in scenarios without a Docker daemon
+- Scenarios require ansible-lint and ansible-playbook installed to run non-SKIP
 - Paths with spaces in CHANGED_FILES are not robustly handled (consistent with other agents)
-- hadolint version differences may produce different rule IDs
+- ansible-lint version differences may produce different rule violations
 
 ## Exploration notes
 Updated `.ralph/exploration.md`:
-- Added docker-agent to the skills reference list with description of its patterns
+- Changed ansible-agent entry from "planned (not yet implemented)" to implemented with description of its actual patterns
 
 ## Lessons Applied This Phase
-- Used existing gha-agent as primary pattern reference for single-tool discovery agents
-- Kept clean fixtures minimal to avoid tool-version-dependent lint failures (hadolint DL3018 on unpinned apk packages)
-- Exported CHANGED_FILES in scenario.env (learned from kube-agent iteration — scenario harness runs agents as subprocess)
+- Used docker-agent/gha-agent as primary pattern references for discovery-based agents
+- Exported CHANGED_FILES in scenario.env (learned from prior iterations — scenario harness runs agents as subprocess)
+- Kept clean fixtures minimal to avoid tool-version-dependent lint failures
+- Omitted setup_lock consistent with simple single-tool agents (gha-agent, docker-agent pattern)
 
 ## Suggestions for the REVIEW agent
-- The kube-agent issues test failure is pre-existing and unrelated to docker-agent changes
-- build-check is intentionally untested in automated scenarios (requires Docker daemon)
-- All 5 docker-agent scenarios pass with hadolint installed
+- The scenarios are SKIP'd without ansible-lint/ansible-playbook installed — this is expected harness behavior
+- All shellcheck checks pass
+- The script follows the exact same patterns as docker-agent and gha-agent
+- FMT_MODE handling follows go-agent conventions

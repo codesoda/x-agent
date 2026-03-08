@@ -15,6 +15,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 
 | Agent | Toolchain | Steps |
 |-------|-----------|-------|
+| `ansible-agent` | Ansible | lint (ansible-lint), syntax (ansible-playbook --syntax-check) |
 | `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
@@ -49,6 +50,9 @@ It also prints a short AGENTS.md/CLAUDE.md policy snippet you can copy/paste.
 ### Use directly (no install)
 
 ```sh
+# Ansible project
+path/to/x-agent/skills/ansible-agent/scripts/ansible-agent.sh
+
 # Rust project
 path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
 
@@ -78,6 +82,17 @@ path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
 
 ## Usage
+
+### ansible-agent
+
+```sh
+ansible-agent.sh              # full suite: lint + syntax
+ansible-agent.sh lint         # ansible-lint check only
+ansible-agent.sh syntax       # ansible-playbook --syntax-check only
+FMT_MODE=fix ansible-agent.sh lint  # auto-fix lint issues
+```
+
+`ansible-agent` runs `ansible-lint` for linting (auto-fix locally, check-only in CI) and `ansible-playbook --syntax-check` on discovered playbooks. Reports SKIP when no YAML files are found.
 
 ### bash-agent
 
@@ -234,6 +249,7 @@ On **PASS**, temp logs are cleaned up automatically. On **FAIL** (or `KEEP_DIR=1
 
 The `skills/` directory contains Claude Code skill definitions. After installing, agents like Claude Code can invoke these as skills:
 
+- `/ansible-agent` — run Ansible playbook checks
 - `/bash-agent` — run shell script checks
 - `/cargo-agent` — run Rust checks
 - `/docker-agent` — run Dockerfile linting
