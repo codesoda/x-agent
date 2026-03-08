@@ -43,6 +43,12 @@ scripts/cargo-agent.sh test     # tests only
 scripts/cargo-agent.sh all      # full suite (default)
 ```
 
+### Run Changed-Crate Tests (Fast Loop)
+```bash
+scripts/cargo-agent.sh test --changed           # tests for crates with changed files
+scripts/cargo-agent.sh test --changed test_auth  # changed-crate tests filtered by name
+```
+
 ### Run Specific Tests
 Pass extra arguments through to cargo-nextest:
 ```bash
@@ -63,6 +69,7 @@ scripts/cargo-agent.sh test -p api test_auth  # "test_auth" in api crate
 | `RUN_INTEGRATION` | `0` | Set to `1` to enable integration tests |
 | `USE_NEXTEST` | `auto` | `auto`/`1`/`0` — controls nextest usage |
 | `FAIL_FAST` | `0` | Set to `1` to stop after first failure (or use `--fail-fast`) |
+| `SQLX_OFFLINE` | `true` | Default SQLx offline mode; set to `false` for live DB (CI overrides this) |
 | `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes check/clippy/test to affected packages |
 | `MAX_LINES` | `40` | Max diagnostic lines printed per step (unlimited in CI) |
 | `KEEP_DIR` | `0` | Set to `1` to keep temp log dir on success |
@@ -85,3 +92,6 @@ scripts/cargo-agent.sh test -p api test_auth  # "test_auth" in api crate
 - Short package names are auto-resolved (e.g. `-p api` matches `my-project-api`)
 - In CI (`CI=true`), `MAX_LINES` defaults to unlimited; locally it defaults to 40
 - Step ordering in `all`: fmt → sqlx → check/clippy → test. sqlx runs before compilation steps because a stale query cache causes confusing downstream errors
+- On test failure, failing test names are extracted and re-run commands are printed
+- `test --changed` uses `git diff` to detect changed crates and scope tests accordingly
+- A workflow-level lock (`flock` on Linux, Perl fallback on macOS) prevents concurrent runs

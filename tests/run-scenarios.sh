@@ -126,7 +126,7 @@ run_shellcheck() {
   local scripts=()
   while IFS= read -r -d '' f; do
     scripts+=("$f")
-  done < <(find "$ROOT_DIR/skills" -name '*.sh' -print0; find "$ROOT_DIR" -maxdepth 1 -name '*.sh' -print0; printf '%s\0' "$ROOT_DIR/tests/run-scenarios.sh")
+  done < <(find "$ROOT_DIR/skills" -name '*.sh' -print0; find "$TESTS_DIR" -name '*.sh' -print0; find "$ROOT_DIR" -maxdepth 1 -name '*.sh' -print0)
 
   if shellcheck --severity=warning "${scripts[@]}" >/dev/null 2>&1; then
     print_status "PASS" "shellcheck"

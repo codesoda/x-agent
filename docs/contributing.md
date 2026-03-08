@@ -74,11 +74,12 @@ Follow `docs/agents/add-x-agent.md` — it covers the full workflow:
 4. Shared env knobs (`KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `RUN_<STEP>`)
 5. `--fail-fast` support with `should_continue`
 6. `CHANGED_FILES` scoping (scope work to affected files/packages)
-7. Exit codes
-8. SKILL.md `allowed-tools` patterns
-9. Repository metadata updates (`README.md`, `install.sh`)
-10. Scenario tests (clean + issues fixtures)
-11. Validate against `docs/agents/definition-of-done.md`
+7. Workflow-level lock (prevent concurrent runs)
+8. Exit codes
+9. SKILL.md `allowed-tools` patterns
+10. Repository metadata updates (`README.md`, `install.sh`)
+11. Scenario tests (clean + issues fixtures)
+12. Validate against `docs/agents/definition-of-done.md`
 
 ## Testing
 

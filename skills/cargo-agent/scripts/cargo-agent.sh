@@ -23,6 +23,9 @@ RUN_INTEGRATION="${RUN_INTEGRATION:-0}" # set to 1 to run integration tests
 FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
 CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes to affected packages
 
+# Default to SQLx offline mode, but allow explicit overrides (e.g. CI sets false).
+export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"
+
 TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
 OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/cargo-agent.XXXXXX")"
 
@@ -36,6 +39,31 @@ cleanup() {
   exit "$code"
 }
 trap cleanup EXIT
+
+# Workflow-level lock: only one cargo-agent instance runs at a time.
+# Prevents overlapping builds when agents invoke the script concurrently.
+LOCKFILE="${TMPDIR_ROOT%/}/cargo-agent.lock"
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock -n 9; then
+    echo "cargo-agent: waiting for another run to finish..."
+    flock 9
+  fi
+else
+  # macOS: flock not available, use perl as a portable fallback.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "Warning: neither flock nor perl available; skipping workflow lock" >&2
+  else
+    perl -e '
+      use Fcntl ":flock";
+      open(my $fh, ">&=", 9) or die "fdopen: $!";
+      if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        print STDERR "cargo-agent: waiting for another run to finish...\n";
+        flock($fh, LOCK_EX) or die "flock: $!";
+      }
+    '
+  fi
+fi
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 2; }
@@ -172,6 +200,65 @@ resolve_affected_packages() {
   if [[ ${#_AFFECTED_PKG_ARGS[@]} -gt 0 ]]; then
     echo "Scoped to packages: ${_AFFECTED_PKG_ARGS[*]}"
   fi
+}
+
+# Build -p package args from changed files in git (tracked + untracked).
+# Populates _CHANGED_PACKAGE_ARGS and _CHANGED_FORCE_FULL.
+_CHANGED_PACKAGE_ARGS=()
+_CHANGED_FORCE_FULL=0
+collect_changed_package_args() {
+  _CHANGED_PACKAGE_ARGS=()
+  _CHANGED_FORCE_FULL=0
+
+  local diff_paths untracked_paths combined_paths changed_crates
+  diff_paths="$(git diff --name-only HEAD 2>/dev/null || true)"
+  untracked_paths="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+  combined_paths="$(printf '%s\n%s\n' "$diff_paths" "$untracked_paths" | sed '/^$/d' | sort -u)"
+
+  if [[ -z "$combined_paths" ]]; then
+    return 1
+  fi
+
+  # Workspace-level cargo config/manifest changes can impact all crates.
+  if echo "$combined_paths" | grep -Eq '^(Cargo\.toml|Cargo\.lock|\.cargo/)'; then
+    _CHANGED_FORCE_FULL=1
+    return 0
+  fi
+
+  changed_crates="$(echo "$combined_paths" | awk -F/ '$1=="crates" && $2!="" {print $2}' | sort -u)"
+  if [[ -z "$changed_crates" ]]; then
+    return 1
+  fi
+
+  local crate_name
+  while IFS= read -r crate_name; do
+    [[ -n "$crate_name" ]] && _CHANGED_PACKAGE_ARGS+=("-p" "$crate_name")
+  done <<< "$changed_crates"
+
+  return 0
+}
+
+# Extract failing test names from a nextest/libtest log file.
+extract_failing_tests() {
+  local log="$1"
+  [[ -s "$log" ]] || return 0
+
+  {
+    # nextest human output, e.g. "FAIL [ 0.001s] crate::module::test_name"
+    sed -nE 's/^.*FAIL[[:space:]]+\[[^]]+\][[:space:]]+([^[:space:]]+).*$/\1/p' "$log"
+    # libtest-style output, e.g. "test crate::module::test_name ... FAILED"
+    sed -nE 's/^test[[:space:]]+([^[:space:]]+)[[:space:]]+\.\.\.[[:space:]]+FAILED$/\1/p' "$log"
+    # Failure summaries under "failures:" sections.
+    awk '
+      /^failures:$/ { in_failures = 1; next }
+      in_failures && /^[[:space:]]*$/ { in_failures = 0; next }
+      in_failures {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        if (line ~ /::/) print line
+      }
+    ' "$log"
+  } | sort -u
 }
 
 run_fmt() {
@@ -367,6 +454,17 @@ have_nextest() {
 run_tests() {
   step "test"
   local ok=1
+  local changed_only=0
+  local -a test_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --changed) changed_only=1 ;;
+      --all) changed_only=0 ;;
+      *) test_args+=("$1") ;;
+    esac
+    shift
+  done
 
   if [[ "$USE_NEXTEST" == "0" ]]; then
     echo "Result: SKIP (USE_NEXTEST=0, no runner configured)"
@@ -381,10 +479,43 @@ run_tests() {
     fi
   fi
 
+  if [[ "$changed_only" == "1" ]]; then
+    if collect_changed_package_args; then
+      if [[ "$_CHANGED_FORCE_FULL" == "1" ]]; then
+        echo "Changed workspace-level Cargo files detected; running full suite."
+      elif [[ ${#_CHANGED_PACKAGE_ARGS[@]} -gt 0 ]]; then
+        echo "Changed crates:"
+        local i
+        for ((i = 1; i < ${#_CHANGED_PACKAGE_ARGS[@]}; i += 2)); do
+          echo "  ${_CHANGED_PACKAGE_ARGS[$i]}"
+        done
+        if [[ ${#test_args[@]} -gt 0 ]]; then
+          test_args=("${_CHANGED_PACKAGE_ARGS[@]}" "${test_args[@]}")
+        else
+          test_args=("${_CHANGED_PACKAGE_ARGS[@]}")
+        fi
+      else
+        echo "Result: SKIP"
+        echo "No changed crates detected under crates/."
+        fmt_elapsed
+        return 0
+      fi
+    else
+      echo "Result: SKIP"
+      echo "No changed files detected in git diff/untracked files."
+      fmt_elapsed
+      return 0
+    fi
+  fi
+
   local log="$OUTDIR/nextest.log"
 
   # Resolve short package names (e.g. -p api → -p ai-barometer-api).
-  resolve_package_args "$@"
+  if [[ ${#test_args[@]} -gt 0 ]]; then
+    resolve_package_args "${test_args[@]}"
+  else
+    resolve_package_args
+  fi
   # Bash 3.2 + `set -u` treats "${arr[@]}" on an empty array as unbound.
   if [[ ${#_RESOLVED_ARGS[@]} -gt 0 ]]; then
     set -- "${_RESOLVED_ARGS[@]}"
@@ -416,6 +547,21 @@ run_tests() {
     echo
     echo "Output (first ${MAX_LINES} lines):"
     head -n "$MAX_LINES" "$log"
+
+    local failed_tests
+    failed_tests="$(extract_failing_tests "$log")"
+    if [[ -n "$failed_tests" ]]; then
+      echo
+      echo "Failing tests:"
+      echo "$failed_tests" | while read -r test_name; do
+        [[ -n "$test_name" ]] && echo "  $test_name"
+      done
+      echo
+      echo "Re-run failing tests with:"
+      echo "$failed_tests" | while read -r test_name; do
+        [[ -n "$test_name" ]] && echo "  /cargo-agent test $test_name"
+      done
+    fi
   fi
 
   echo
@@ -433,7 +579,7 @@ cargo-agent: lean Rust workflow output for coding agents
 Usage:
   cargo-agent [--fail-fast]            # runs fmt, clippy, sqlx, nextest (if installed)
   cargo-agent [--fail-fast] fmt|check|clippy|sqlx|all
-  cargo-agent [--fail-fast] test [NEXTEST_ARGS]
+  cargo-agent [--fail-fast] test [--changed|--all] [NEXTEST_ARGS]
 
 Flags:
   --fail-fast            stop after first failing step; also passed to nextest
@@ -457,6 +603,8 @@ Examples:
   cargo-agent --fail-fast              # full suite, stop on first failure
   cargo-agent sqlx                     # sqlx cache verify only
   cargo-agent test test_login          # tests matching "test_login"
+  cargo-agent test --changed           # tests for crates with changed files
+  cargo-agent test --changed test_auth # changed-crate tests filtered by "test_auth"
   cargo-agent test -p db               # tests in the db crate
   cargo-agent test -p api test_auth    # "test_auth" in api crate
   RUN_TESTS=0 cargo-agent              # skip tests

@@ -201,13 +201,49 @@ Guidelines:
 - Print what the scope resolved to (e.g. `Scoped to packages: -p api -p db`).
 - Add `Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)` to SKILL.md `allowed-tools`.
 
-## 7) Exit codes
+## 7) Workflow-level lock
+
+Prevent concurrent agent runs from causing build-directory contention by
+acquiring an exclusive lock at startup. Place the lock after the cleanup trap
+and before any real work:
+
+```bash
+LOCKFILE="${TMPDIR_ROOT%/}/<name>-agent.lock"
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock -n 9; then
+    echo "<name>-agent: waiting for another run to finish..."
+    flock 9
+  fi
+else
+  # macOS: flock not available, use perl as a portable fallback.
+  if ! command -v perl >/dev/null 2>&1; then
+    echo "Warning: neither flock nor perl available; skipping workflow lock" >&2
+  else
+    perl -e '
+      use Fcntl ":flock";
+      open(my $fh, ">&=", 9) or die "fdopen: $!";
+      if (!flock($fh, LOCK_EX | LOCK_NB)) {
+        print STDERR "<name>-agent: waiting for another run to finish...\n";
+        flock($fh, LOCK_EX) or die "flock: $!";
+      }
+    '
+  fi
+fi
+```
+
+The lock is automatically released when the script exits (fd 9 is closed).
+On Linux `flock` is used directly; on macOS (where `flock` is unavailable)
+the script falls back to Perl's `flock`. If neither is available, a warning
+is printed and execution continues unlocked.
+
+## 8) Exit codes
 
 - `0` — all steps passed
 - `1` — one or more steps failed
 - `2` — bad usage, unknown command, or missing required dependency
 
-## 8) SKILL.md
+## 9) SKILL.md
 
 The `SKILL.md` front-matter must list `allowed-tools` patterns for every env knob the script supports, so the agent can invoke the script without prompting. Include at minimum:
 
@@ -221,14 +257,14 @@ allowed-tools:
   - Bash(CHANGED_FILES=* scripts/<name>-agent.sh*)
 ```
 
-## 9) Update repository metadata
+## 10) Update repository metadata
 
 Update:
 
 - `README.md` (agent table + usage examples)
 - `install.sh` (`SKILLS` list and optional dependency checks)
 
-## 10) Add scenario tests
+## 11) Add scenario tests
 
 Add at least:
 
@@ -237,7 +273,7 @@ Add at least:
 
 Each scenario needs a `scenario.env`. See `docs/agents/scenario-tests.md`.
 
-## 11) Validate against definition of done
+## 12) Validate against definition of done
 
 Run through `docs/agents/definition-of-done.md` before commit.
 
