@@ -169,9 +169,11 @@ When the `all` command runs multiple steps and `--fail-fast` (or `FAIL_FAST=1`) 
 Use the `should_continue` helper before each step in the `all` path:
 
 ```bash
-if [[ "$RUN_FMT" == "1" ]]; then run_fmt || overall_ok=0; fi
+if [[ "$RUN_FMT" == "1" ]] && should_continue; then run_fmt || overall_ok=0; fi
 if [[ "$RUN_LINT" == "1" ]] && should_continue; then run_lint || overall_ok=0; fi
 ```
+
+Since `overall_ok` starts as `1`, the guard passes for the first step — apply it consistently to all steps for clarity.
 
 If a downstream tool supports its own fail-fast flag (e.g. `cargo nextest --fail-fast`), pass it through.
 
