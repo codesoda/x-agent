@@ -80,24 +80,11 @@ Follow `docs/agents/add-x-agent.md` — it covers the full workflow:
 10. Scenario tests (clean + issues fixtures)
 11. Validate against `docs/agents/definition-of-done.md`
 
-## Running Tests
+## Testing
 
-```bash
-# All scenarios + shellcheck
-tests/run-scenarios.sh
-
-# Filter by agent
-tests/run-scenarios.sh cargo-agent
-
-# Just shellcheck
-tests/run-scenarios.sh shellcheck
-
-# List all scenarios
-tests/run-scenarios.sh --list
-```
-
-shellcheck is **required** — the test runner fails if it is not installed.
-Install with `brew install shellcheck`.
+Run `tests/run-scenarios.sh` to execute shellcheck and all scenario fixtures.
+See `docs/testing.md` for CI workflow details, matrix strategy, and how to
+add coverage for a new agent.
 
 ## Commit Style
 
