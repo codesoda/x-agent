@@ -261,14 +261,12 @@ check_optional_deps() {
   all_ok=1
 
   if skill_selected "cargo-agent"; then
-    for dep in jq; do
-      if command -v "$dep" >/dev/null 2>&1; then
-        info "  Found: ${dep}"
-      else
-        warn "  Missing: ${dep} (needed by cargo-agent)"
-        all_ok=0
-      fi
-    done
+    if command -v jq >/dev/null 2>&1; then
+      info "  Found: jq"
+    else
+      warn "  Missing: jq (needed by cargo-agent)"
+      all_ok=0
+    fi
 
     if command -v cargo >/dev/null 2>&1; then
       info "  Found: cargo"
