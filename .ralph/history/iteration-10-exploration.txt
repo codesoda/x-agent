@@ -19,10 +19,9 @@
 - `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
 - `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
 - `.ralph/specs/04-go-agent.md`: go-agent user story and acceptance criteria.
-- `skills/go-agent/SKILL.md`: trigger metadata and allowed-tools for Go checks, including `FMT_MODE=*` pattern.
-- `skills/go-agent/scripts/go-agent.sh`: Go workflow runner sourcing `lib/x-agent-common.sh`; runs gofmt (check/fix), go vet, optional staticcheck, and go test. Supports CHANGED_FILES→package scoping via directory derivation. Uses `print_result` from shared lib.
-- `tests/go-agent/clean/`: valid Go project (`go.mod` + `main.go`), expects exit 0.
-- `tests/go-agent/issues/`: Go project with `fmt.Printf("%d", "string")` vet issue, expects exit 1.
+- `skills/go-agent/SKILL.md` (to be added): triggers, usage, and allowed-tools for Go checks.
+- `skills/go-agent/scripts/go-agent.sh` (to be added): Go checks implementation, including CHANGED_FILES package scoping.
+- `tests/go-agent/clean` and `tests/go-agent/issues` (to be added): required fixture set.
 
 ## Patterns & Conventions
 

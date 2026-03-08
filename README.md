@@ -17,6 +17,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+| `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
@@ -53,6 +54,9 @@ path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
 # Python project
 path/to/x-agent/skills/py-agent/scripts/py-agent.sh
 
+# Go project
+path/to/x-agent/skills/go-agent/scripts/go-agent.sh
+
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
@@ -77,6 +81,18 @@ cargo-agent.sh clippy       # clippy only
 cargo-agent.sh test         # tests only
 cargo-agent.sh test -p api  # tests in a specific crate
 ```
+
+### go-agent
+
+```sh
+go-agent.sh                 # full suite: fmt + vet + staticcheck + test
+go-agent.sh fmt             # gofmt check/fix
+go-agent.sh vet             # go vet analysis
+go-agent.sh test            # tests only
+FMT_MODE=fix go-agent.sh fmt  # auto-fix formatting
+```
+
+`go-agent` uses `gofmt` for formatting (auto-fix locally, check-only in CI), `go vet` for analysis, optional `staticcheck` for linting, and `go test` for tests.
 
 ### npm-agent
 
@@ -164,6 +180,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 
 - `/bash-agent` — run shell script checks
 - `/cargo-agent` — run Rust checks
+- `/go-agent` — run Go checks
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks
 - `/terra-agent` — run Terraform checks/fixes

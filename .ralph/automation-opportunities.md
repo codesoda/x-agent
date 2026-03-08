@@ -41,3 +41,17 @@
 **Automated Check**: Add a planning validation rule that ensures `x-agent` plans requiring new agents include both script path and fixture path updates in `.ralph/exploration.md` or block `ralph validate plan`.
 
 **Status**: PENDING
+
+## [2026-03-08T17:26:14Z] go-fmt-check-exit-status
+
+**Frequency**: First occurrence
+
+**Priority**: MEDIUM
+
+**Current Issue**: `gofmt -l` output checks can be treated as successful formatting checks even when `gofmt` exits non-zero (for example, parser or filesystem errors), which can create false PASS results in `fmt` check mode.
+
+**Manual Check**: In formatting check steps, verify command exit status is captured separately from diff output checks before printing PASS.
+
+**Automated Check**: Add a shellcheck/lint rule or helper wrapper test in scenario review that flags check-mode implementations that ignore `gofmt -l`/scanner exit status and rely solely on empty stdout.
+
+**Status**: PENDING

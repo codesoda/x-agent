@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="bash-agent cargo-agent npm-agent py-agent terra-agent"
+SKILLS="bash-agent cargo-agent go-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -298,6 +298,21 @@ check_optional_deps() {
     fi
   fi
 
+  if skill_selected "go-agent"; then
+    if command -v go >/dev/null 2>&1; then
+      info "  Found: go"
+    else
+      warn "  Missing: go (needed by go-agent)"
+      all_ok=0
+    fi
+
+    if command -v staticcheck >/dev/null 2>&1; then
+      info "  Found: staticcheck"
+    else
+      warn "  Missing: staticcheck (optional for go-agent staticcheck step)"
+    fi
+  fi
+
   if skill_selected "cargo-agent"; then
     if command -v jq >/dev/null 2>&1; then
       info "  Found: jq"
@@ -374,6 +389,9 @@ print_agents_md_snippet() {
     case "$skill" in
       bash-agent)
         echo "- Bash/Shell: use \`/bash-agent\` (syntax/lint)."
+        ;;
+      go-agent)
+        echo "- Go: use \`/go-agent\` (fmt/vet/staticcheck/test)."
         ;;
       cargo-agent)
         echo "- Rust: use \`/cargo-agent\` (fmt/check/clippy/test)."

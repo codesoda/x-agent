@@ -1,55 +1,57 @@
-# Work Summary — Spec 03: bash-agent
+# Work Summary — Spec 04: go-agent
 
 ## What was implemented
 
-Created the bash-agent — a lean shell script validation runner that checks `.sh` files with `bash -n` (syntax) and `shellcheck` (lint).
+Created the go-agent — a lean Go workflow runner that checks formatting (gofmt), runs vet/lint (go vet, staticcheck), and executes tests (go test).
 
 ### Files created:
-- `skills/bash-agent/scripts/bash-agent.sh` — main agent script (~170 lines of domain code)
-- `skills/bash-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
-- `tests/bash-agent/clean/scenario.env` + `scripts/good.sh` — passing fixture
-- `tests/bash-agent/issues/scenario.env` + `scripts/bad.sh` — failing fixture (SC2034, SC2154)
+- `skills/go-agent/scripts/go-agent.sh` — main agent script (~230 lines total, ~170 lines domain code)
+- `skills/go-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/go-agent/clean/scenario.env` + `go.mod` + `main.go` — passing fixture (valid formatted Go program)
+- `tests/go-agent/issues/scenario.env` + `go.mod` + `main.go` — failing fixture (`fmt.Printf("%d", "string")` vet issue)
 
 ### Files modified:
-- `install.sh` — added `bash-agent` to SKILLS, shellcheck dep check, and snippet line
-- `README.md` — added bash-agent row in Available Agents table, usage section, and skill reference
-- `tests/run-scenarios.sh` — excluded `tests/*/issues/*` from project-wide shellcheck scan (issue fixtures are intentionally bad)
-- `.ralph/exploration.md` — updated bash-agent entries from "planned" to actual descriptions
+- `install.sh` — added `go-agent` to SKILLS, go/staticcheck dep checks, and snippet line
+- `README.md` — added go-agent row in Available Agents table, usage section, direct-use example, and skill reference
 
 ## Deviations from work plan
 
-- **No `setup_lock` call**: bash-agent does not use workflow locking. Unlike cargo-agent (which has heavy build operations), `bash -n` and `shellcheck` are lightweight read-only checks with no shared state. This matches npm-agent and terra-agent which also don't use locks.
-- **Issue fixture uses SC2034/SC2154 (warning-level)** instead of SC2086 (info-level): SC2086 is severity `info`, not `warning`, so it doesn't trigger at the default `--severity=warning`. Used unused-variable (SC2034) and unset-variable (SC2154) which are genuine warnings.
-- **Modified `tests/run-scenarios.sh`**: Added `-not -path '*/issues/*'` to the shellcheck find command to exclude issue fixture scripts from the project-wide shellcheck scan. Without this, intentionally-bad fixtures in `tests/bash-agent/issues/` would fail the global shellcheck step.
+- **No `setup_lock` call**: go-agent does not use workflow locking. `gofmt`, `go vet`, and `go test` are read-only or idempotent operations without shared state requiring serialization. This matches bash-agent, npm-agent, and terra-agent which also don't use locks.
+- **Issue fixture uses vet issue only** (not formatting): Using `fmt.Printf("%d", "string")` which triggers `go vet` reliably. The code is already properly gofmt-formatted (gofmt doesn't care about semantic issues), so the failure comes from the vet step. This is more robust across Go versions than trying to create formatting issues.
 
 ## Edge cases handled
-- `CHANGED_FILES` filtering: only existing `.sh` files are included
-- No `.sh` files discovered: prints `Result: SKIP (no matching .sh files)` and returns 0
-- Help/--help/-h: handled before `need` checks so it works without shellcheck installed
+- `CHANGED_FILES` filtering: only existing `.go` files are included, unique directories derived
+- `FMT_MODE=auto`: resolves to `fix` locally, `check` in CI; CI forces `check` regardless of explicit setting
+- Invalid `FMT_MODE` values: prints error and exits 2
+- Missing `staticcheck`: prints `Result: SKIP` with install instructions, continues to remaining steps
+- `gofmt -l` exit code handling: checks output emptiness (not exit code) since gofmt exits 0 even when files need formatting
+- Help/--help/-h: handled before `need` checks so it works without go installed
 - Unknown commands: print usage and exit 2
-- Shellcheck wiki links: extracts unique SC codes from output, limits to first 5, builds wiki URLs
-- `SHELLCHECK_SEVERITY` override: passes through to shellcheck `--severity` flag
+- Test failure extraction: parses `--- FAIL:` lines from go test output; falls back to generic hint if none found
 - `FAIL_FAST`: uses `should_continue()` from shared lib in `all` command path
 
 ## Tests written/run
-- `tests/bash-agent/clean/` — passes with exit 0 (valid script, all checks pass)
-- `tests/bash-agent/issues/` — fails with exit 1 (shellcheck warnings in bad.sh)
-- `shellcheck --severity=warning` passes on bash-agent.sh itself
-- Full suite: all 14 scenarios pass (including all existing agents)
+- `tests/go-agent/clean/` — passes with exit 0 (valid Go project, all checks pass)
+- `tests/go-agent/issues/` — fails with exit 1 (go vet catches Printf format mismatch)
+- `shellcheck --severity=warning` passes on go-agent.sh itself
+- Full suite: all 16 scenarios pass (including all existing agents)
 
 ## Known limitations
-- `bash -n` only checks syntax, not runtime errors — this is by design
-- File discovery splits `CHANGED_FILES` on whitespace, so paths with spaces are not supported (matches convention used by all other agents)
-- `shellcheck` is invoked once with all files as arguments; very large file lists could hit argument length limits (unlikely in practice)
+- `CHANGED_FILES` splits on whitespace; paths with spaces are not supported (matches convention used by all other agents)
+- `gofmt` operates on directories rather than individual files when scoped; this may format unchanged files in the same directory
+- `staticcheck` is fully optional; if not installed, that analysis step is simply skipped
+
+## Feedback Closure Matrix
+No prior review issues exist for this spec (first implementation).
 
 ## Exploration notes
-Updated `.ralph/exploration.md`: changed bash-agent entries from "planned" to implemented descriptions, noted the `run-scenarios.sh` exclusion of issue fixtures from shellcheck, and documented the fixture contents.
+Updated `.ralph/exploration.md`: changed go-agent entries from "to be added" to actual descriptions of implemented files, noted the vet-based issue fixture strategy.
 
 ## Lessons Applied This Phase
-No prior lessons existed for this project. No new lessons required — implementation followed established patterns cleanly.
+No prior lessons existed for this project. Followed established patterns from bash-agent implementation (print_result usage, help-before-need, issue fixture design).
 
 ## Suggestions for the REVIEW agent
-- Verify `--help` works without shellcheck installed (it should since help is parsed before `need` calls)
-- The `run-scenarios.sh` change to exclude `*/issues/*` from shellcheck is important for all future agents with intentionally-bad shell fixtures
-- `print_result` from shared lib is used by bash-agent (first agent to adopt it) — validates the shared lib API
-- Consider whether future agents also need the `*/issues/*` shellcheck exclusion documented in contributing docs
+- Verify `--help` works without go installed (help is parsed before `need go`)
+- The issue fixture relies on `go vet` detecting `Printf` format mismatch — confirm this triggers on the reviewer's Go version
+- `staticcheck` step correctly SKIPs when not installed (doesn't fail the run)
+- `FMT_MODE` CI override is tested implicitly through the clean fixture (which runs with default auto mode = fix locally)

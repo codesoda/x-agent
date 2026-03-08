@@ -1,18 +1,18 @@
 ## Implementation Checklist
-- [x] 1. Confirm go-agent scope and current runner contract by reviewing `.ralph/task.md`, `.ralph/specs/04-go-agent.md`, `docs/agents/add-x-agent.md`, and existing shared-lib patterns.
-- [x] 2. Create `skills/go-agent/scripts/go-agent.sh` with shared-lib sourcing (`lib/x-agent-common.sh`) and domain-step execution only.
-- [x] 3. Implement universal and go-specific knobs in `go-agent.sh` with safe defaults and CI-aware `FMT_MODE` behavior (`auto` => CI check, local fix).
-- [x] 4. Implement `run_fmt` using `gofmt -l` in check mode and `gofmt -w` in fix mode, including structured result/fix hints and CHANGED_FILES scoped targets.
-- [x] 5. Implement `run_vet` with `go vet` and `staticcheck` detection wrapper, keeping `staticcheck` optional with required skip message and scoped/unscope package execution.
-- [x] 6. Implement `run_test` using `go test` with failing test extraction from `--- FAIL:` lines and rich `Fix:` hint.
-- [x] 7. Implement robust CHANGED_FILES-to-package mapping for Go fixtures and package args for `go vet`, `staticcheck`, and `go test`.
-- [x] 8. Add command dispatch (`fmt`, `vet`, `staticcheck`, `test`, `all`, plus `--fail-fast`, `help`/`-h` before need()) and final `Overall` flow with `overall_ok` accumulation.
-- [x] 9. Create `skills/go-agent/SKILL.md` with trigger text and allowed-tools including `FMT_MODE=*` and CHANGED_FILES.
-- [x] 10. Add `tests/go-agent/clean/scenario.env` and `tests/go-agent/issues/scenario.env` with required fixtures (`go.mod`, `main.go`) and `REQUIRED_TOOLS="go"`.
-- [x] 11. Update `install.sh` to include `go-agent` in skill selection, dependency checks, and AGENTS/CLAUDE snippet.
-- [x] 12. Update `README.md` to list go-agent in Available Agents and add usage examples.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Confirm go-agent scope and current runner contract by reviewing `.ralph/task.md`, `.ralph/specs/04-go-agent.md`, `docs/agents/add-x-agent.md`, and existing shared-lib patterns.
+- [ ] 2. Create `skills/go-agent/scripts/go-agent.sh` with shared-lib sourcing (`lib/x-agent-common.sh`) and domain-step execution only.
+- [ ] 3. Implement universal and go-specific knobs in `go-agent.sh` with safe defaults and CI-aware `FMT_MODE` behavior (`auto` => CI check, local fix).
+- [ ] 4. Implement `run_fmt` using `gofmt -l` in check mode and `gofmt -w` in fix mode, including structured result/fix hints and CHANGED_FILES scoped targets.
+- [ ] 5. Implement `run_vet` with `go vet` and `staticcheck` detection wrapper, keeping `staticcheck` optional with required skip message and scoped/unscope package execution.
+- [ ] 6. Implement `run_test` using `go test` with failing test extraction from `--- FAIL:` lines and rich `Fix:` hint.
+- [ ] 7. Implement robust CHANGED_FILES-to-package mapping for Go fixtures and package args for `go vet`, `staticcheck`, and `go test`.
+- [ ] 8. Add command dispatch (`fmt`, `vet`, `staticcheck`, `test`, `all`, plus `--fail-fast`, `help`/`-h` before need()) and final `Overall` flow with `overall_ok` accumulation.
+- [ ] 9. Create `skills/go-agent/SKILL.md` with trigger text and allowed-tools including `FMT_MODE=*` and CHANGED_FILES.
+- [ ] 10. Add `tests/go-agent/clean/scenario.env` and `tests/go-agent/issues/scenario.env` with required fixtures (`go.mod`, `main.go`) and `REQUIRED_TOOLS="go"`.
+- [ ] 11. Update `install.sh` to include `go-agent` in skill selection, dependency checks, and AGENTS/CLAUDE snippet.
+- [ ] 12. Update `README.md` to list go-agent in Available Agents and add usage examples.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS
 
 ## Architecture Review
 
