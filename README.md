@@ -17,6 +17,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 |-------|-----------|-------|
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
+| `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
 
 ## Quick Start
@@ -48,6 +49,9 @@ path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
 # Node.js project
 path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
 
+# Python project
+path/to/x-agent/skills/py-agent/scripts/py-agent.sh
+
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
@@ -74,6 +78,18 @@ npm-agent.sh typecheck      # type checking only
 ```
 
 npm-agent auto-detects your package manager (bun, pnpm, yarn, npm) and finds formatters/linters from package.json scripts or common tools (biome, eslint, prettier, tsc).
+
+### py-agent
+
+```sh
+py-agent.sh                # full suite: format + lint + typecheck + test
+py-agent.sh format         # format only (auto-fix locally, check in CI)
+py-agent.sh lint           # lint only
+py-agent.sh test           # tests only
+py-agent.sh test -k login  # tests matching "login"
+```
+
+py-agent auto-detects your runner (uv, poetry, or plain python) and finds tools (ruff, black, flake8, mypy, pyright, pytest).
 
 ### terra-agent
 
@@ -138,6 +154,7 @@ The `skills/` directory contains Claude Code skill definitions. After installing
 
 - `/cargo-agent` — run Rust checks
 - `/npm-agent` — run Node.js checks
+- `/py-agent` — run Python checks
 - `/terra-agent` — run Terraform checks/fixes
 
 ## License

@@ -9,6 +9,7 @@ Read this file first, then open only the linked docs you need.
 - Keep output concise and structured (`Step`, `Result`, `Fix`, `Overall`, log path).
 - Support shared knobs (`RUN_<STEP>`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`).
 - Every `Result: FAIL` must include a `Fix:` hint.
+- The `help`/`--help`/`-h` command must work without project context — resolve it before any project-existence checks.
 - `shellcheck --severity=warning` must pass on all scripts.
 - Ship one backlog item per commit.
 

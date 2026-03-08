@@ -71,6 +71,39 @@ jobs:
           CI: "true"
         run: tests/run-scenarios.sh npm-agent
 
+  # ── py-agent scenarios ──────────────────────────────────────────────
+  py-agent:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # baseline: no optional python tools
+          - name: baseline
+            install_ruff: false
+
+          # with ruff
+          - name: with-ruff
+            install_ruff: true
+
+    name: "py-agent (${{ matrix.name }})"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        if: matrix.install_ruff
+        run: pip install ruff
+
+      - name: Run py-agent scenarios
+        env:
+          CI: "true"
+        run: tests/run-scenarios.sh py-agent
+
   # ── terra-agent scenarios ───────────────────────────────────────────
   terra-agent:
     runs-on: ubuntu-latest
