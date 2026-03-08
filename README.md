@@ -15,6 +15,7 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 
 | Agent | Toolchain | Steps |
 |-------|-----------|-------|
+| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
@@ -57,6 +58,15 @@ path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
 
 ## Usage
+
+### bash-agent
+
+```sh
+bash-agent.sh              # full suite: syntax + lint
+bash-agent.sh syntax       # bash -n syntax check only
+bash-agent.sh lint         # shellcheck lint only
+SHELLCHECK_SEVERITY=error bash-agent.sh lint  # only errors, ignore warnings
+```
 
 ### cargo-agent
 
@@ -152,6 +162,7 @@ On **PASS**, temp logs are cleaned up automatically. On **FAIL** (or `KEEP_DIR=1
 
 The `skills/` directory contains Claude Code skill definitions. After installing, agents like Claude Code can invoke these as skills:
 
+- `/bash-agent` — run shell script checks
 - `/cargo-agent` — run Rust checks
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks

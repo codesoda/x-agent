@@ -27,3 +27,17 @@
 **Automated Check**: Add a validation rule in `ralph validate review` to read `.ralph/work-plan.txt`, fail when any `- [ ]` remains, and include file/line references.
 
 **Status**: PENDING
+
+## [2026-03-08T17:10:01Z] bash-agent-exploration-check
+
+**Frequency**: First occurrence in multi-step feature plans
+
+**Priority**: HIGH
+
+**Current Issue**: New agent planning often forgets to update `find`-exclude list and fixture expectations together, causing either over-scoped script checks or expensive scans.
+
+**Manual Check**: Before implementation, verify all planned new-agent scenarios and discovery paths are documented in `.ralph/exploration.md` and mirrored in plan assumptions.
+
+**Automated Check**: Add a planning validation rule that ensures `x-agent` plans requiring new agents include both script path and fixture path updates in `.ralph/exploration.md` or block `ralph validate plan`.
+
+**Status**: PENDING

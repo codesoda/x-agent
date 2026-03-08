@@ -1,56 +1,55 @@
-# Work Summary — Spec 02: Refactor Existing Agents to Use Shared Library
+# Work Summary — Spec 03: bash-agent
 
 ## What was implemented
 
-Refactored all three existing agents (cargo-agent, npm-agent, terra-agent) to source `lib/x-agent-common.sh` instead of duplicating boilerplate.
+Created the bash-agent — a lean shell script validation runner that checks `.sh` files with `bash -n` (syntax) and `shellcheck` (lint).
 
-### For each agent:
-1. Added `SCRIPT_DIR`/`LIB_DIR` resolution and `source` line after `set -euo pipefail`
-2. Removed duplicated boilerplate: `KEEP_DIR`, `MAX_LINES` (CI-aware block), `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `OUTDIR` mktemp, `cleanup()` + trap, `need()`, `hr()`, `should_continue()`, `STEP_START_SECONDS`, `step()`, `fmt_elapsed()`
-3. Replaced inline setup with `setup_outdir "<agent-name>"` calls
-4. Replaced inline final summary block with `print_overall "$overall_ok"`
+### Files created:
+- `skills/bash-agent/scripts/bash-agent.sh` — main agent script (~170 lines of domain code)
+- `skills/bash-agent/SKILL.md` — trigger language, allowed-tools, and usage docs
+- `tests/bash-agent/clean/scenario.env` + `scripts/good.sh` — passing fixture
+- `tests/bash-agent/issues/scenario.env` + `scripts/bad.sh` — failing fixture (SC2034, SC2154)
 
-### Agent-specific details:
-- **cargo-agent**: Also removed inline lock block (flock + perl fallback), replaced with `setup_lock "cargo-agent"`
-- **npm-agent**: No lock block existed; kept `detect_pm()`, `_CHANGED_SRC_FILES` filtering, and all `run_script()` helpers. Added `shellcheck disable=SC2034` for `FAIL_FAST` assignment in `--fail-fast` handler (used by `should_continue()` in shared lib)
-- **terra-agent**: No lock block existed; kept `normalize_dir()`, `resolve_changed_tf_dir()`, `tf()`, `ensure_terraform_project()`, `normalize_fmt_mode()`. `TF_DATA_DIR_PATH` set after `setup_outdir` to ensure `OUTDIR` is available. Added `shellcheck disable=SC2034` for `FAIL_FAST` assignment
+### Files modified:
+- `install.sh` — added `bash-agent` to SKILLS, shellcheck dep check, and snippet line
+- `README.md` — added bash-agent row in Available Agents table, usage section, and skill reference
+- `tests/run-scenarios.sh` — excluded `tests/*/issues/*` from project-wide shellcheck scan (issue fixtures are intentionally bad)
+- `.ralph/exploration.md` — updated bash-agent entries from "planned" to actual descriptions
 
 ## Deviations from work plan
 
-- npm-agent and terra-agent did not need `setup_lock` — they never had lock blocks. Only cargo-agent had workflow locking.
-- Added `shellcheck disable=SC2034` directives for `FAIL_FAST` in npm-agent and terra-agent since shellcheck can't see cross-file usage via sourced library.
+- **No `setup_lock` call**: bash-agent does not use workflow locking. Unlike cargo-agent (which has heavy build operations), `bash -n` and `shellcheck` are lightweight read-only checks with no shared state. This matches npm-agent and terra-agent which also don't use locks.
+- **Issue fixture uses SC2034/SC2154 (warning-level)** instead of SC2086 (info-level): SC2086 is severity `info`, not `warning`, so it doesn't trigger at the default `--severity=warning`. Used unused-variable (SC2034) and unset-variable (SC2154) which are genuine warnings.
+- **Modified `tests/run-scenarios.sh`**: Added `-not -path '*/issues/*'` to the shellcheck find command to exclude issue fixture scripts from the project-wide shellcheck scan. Without this, intentionally-bad fixtures in `tests/bash-agent/issues/` would fail the global shellcheck step.
 
 ## Edge cases handled
-- `FAIL_FAST` shellcheck warning: suppressed with SC2034 directive and comment explaining cross-file usage
-- terra-agent `TF_DATA_DIR_PATH` depends on `OUTDIR`: placed after `setup_outdir` call
-- Agent-specific `RUN_*` variables kept in each agent (not moved to shared lib)
-- `SQLX_OFFLINE` export kept in cargo-agent
-- `JQ_BIN` kept in cargo-agent
-- `detect_pm` and top-level PM echo kept in npm-agent (runs at load time, before main)
-
-## Line count reduction
-- cargo-agent: 658 → 593 (-65 lines, -10%)
-- npm-agent: 390 → 354 (-36 lines, -9%)
-- terra-agent: 469 → 429 (-40 lines, -9%)
-- Total: 1517 → 1376 (-141 lines removed)
+- `CHANGED_FILES` filtering: only existing `.sh` files are included
+- No `.sh` files discovered: prints `Result: SKIP (no matching .sh files)` and returns 0
+- Help/--help/-h: handled before `need` checks so it works without shellcheck installed
+- Unknown commands: print usage and exit 2
+- Shellcheck wiki links: extracts unique SC codes from output, limits to first 5, builds wiki URLs
+- `SHELLCHECK_SEVERITY` override: passes through to shellcheck `--severity` flag
+- `FAIL_FAST`: uses `should_continue()` from shared lib in `all` command path
 
 ## Tests written/run
-- Baseline: all 12 scenarios passed before refactoring
-- After refactor: all 12 scenarios pass (identical results)
-- `shellcheck --severity=warning` passes on all three scripts
-- Shellcheck suite in `tests/run-scenarios.sh` also passes (includes lib/)
+- `tests/bash-agent/clean/` — passes with exit 0 (valid script, all checks pass)
+- `tests/bash-agent/issues/` — fails with exit 1 (shellcheck warnings in bad.sh)
+- `shellcheck --severity=warning` passes on bash-agent.sh itself
+- Full suite: all 14 scenarios pass (including all existing agents)
 
 ## Known limitations
-- `print_result` from shared lib is not adopted by any agent in this spec — agents retain their inline Result/Fix printing patterns because each has unique formatting (cargo's JSON diagnostics, terra's init+plan dual logs, etc.). This is intentional to preserve output parity.
-- Path coupling (`../../../lib`) remains as designed for this phase.
+- `bash -n` only checks syntax, not runtime errors — this is by design
+- File discovery splits `CHANGED_FILES` on whitespace, so paths with spaces are not supported (matches convention used by all other agents)
+- `shellcheck` is invoked once with all files as arguments; very large file lists could hit argument length limits (unlikely in practice)
 
 ## Exploration notes
-Updated `.ralph/exploration.md`: changed descriptions for all three agent scripts to note they now source `lib/x-agent-common.sh` instead of containing inline boilerplate.
+Updated `.ralph/exploration.md`: changed bash-agent entries from "planned" to implemented descriptions, noted the `run-scenarios.sh` exclusion of issue fixtures from shellcheck, and documented the fixture contents.
 
 ## Lessons Applied This Phase
-No prior lessons existed for this project. No new lessons required — refactoring was straightforward with clear patterns.
+No prior lessons existed for this project. No new lessons required — implementation followed established patterns cleanly.
 
 ## Suggestions for the REVIEW agent
-- Verify that the `help` command still works without project context for all three agents
-- The `print_result` function from shared lib remains unused by existing agents — future new agents should adopt it for cleaner step result formatting
-- Lock behavior is only used by cargo-agent; npm-agent and terra-agent don't need locks as they don't have heavy concurrent build semantics
+- Verify `--help` works without shellcheck installed (it should since help is parsed before `need` calls)
+- The `run-scenarios.sh` change to exclude `*/issues/*` from shellcheck is important for all future agents with intentionally-bad shell fixtures
+- `print_result` from shared lib is used by bash-agent (first agent to adopt it) — validates the shared lib API
+- Consider whether future agents also need the `*/issues/*` shellcheck exclusion documented in contributing docs

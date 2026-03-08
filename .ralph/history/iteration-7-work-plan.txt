@@ -1,18 +1,18 @@
 ## Implementation Checklist
-- [x] 1. Confirm shared-library patterns and existing helper contracts are reused (`lib/x-agent-common.sh`, `setup_outdir`, `setup_lock`, `print_overall`) and no per-agent exception handling is introduced in bash-agent.
-- [x] 2. Create `skills/bash-agent/scripts/bash-agent.sh` with shared-lib sourcing, required knobs, and command dispatch structure that supports `syntax`, `lint`, `all`, `--fail-fast`, `help`, and unknown-command handling.
-- [x] 3. Implement `.sh` discovery logic with explicit behavior for `CHANGED_FILES` and recursive scan fallback, including `.git`, `node_modules`, and `vendor` exclusion.
-- [x] 4. Implement `run_syntax` step using `bash -n` across discovered files, aggregate full diagnostics to a per-step log, and print truncated output + `Fix:` hint on failure.
-- [x] 5. Implement `run_lint` step using `shellcheck --severity=${SHELLCHECK_SEVERITY}` across discovered files, aggregate logs, and produce shellcheck wiki link(s) in `Fix:` on failure.
-- [x] 6. Ensure command path supports `SHELLCHECK_SEVERITY` override and default severity semantics while keeping required `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST` behavior intact.
-- [x] 7. Create `skills/bash-agent/SKILL.md` with trigger language and `allowed-tools` entries for RUN knobs, `SHELLCHECK_SEVERITY`, `CHANGED_FILES`, and shared controls.
-- [x] 8. Add scenario fixtures under `tests/bash-agent/clean` and `tests/bash-agent/issues`, including `scenario.env` and fixture scripts.
-- [x] 9. Validate fixture behavior: `clean` exits 0 with `shellcheck`+`bash` available, and `issues` exits 1 for intentional lint violation and/or shell syntax issue.
-- [x] 10. Update `install.sh` to include `bash-agent` in `SKILLS`, add optional dependency check messaging for `shellcheck`, and add `bash-agent` line to `print_agents_md_snippet`.
-- [x] 11. Update `README.md` with bash-agent row in Available Agents and usage examples showing `syntax`, `lint`, and `all`.
-- [x] 12. Run `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent` locally in validation slice, then fix and rerun until green.
-- [x] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
-- [x] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
+- [ ] 1. Confirm shared-library patterns and existing helper contracts are reused (`lib/x-agent-common.sh`, `setup_outdir`, `setup_lock`, `print_overall`) and no per-agent exception handling is introduced in bash-agent.
+- [ ] 2. Create `skills/bash-agent/scripts/bash-agent.sh` with shared-lib sourcing, required knobs, and command dispatch structure that supports `syntax`, `lint`, `all`, `--fail-fast`, `help`, and unknown-command handling.
+- [ ] 3. Implement `.sh` discovery logic with explicit behavior for `CHANGED_FILES` and recursive scan fallback, including `.git`, `node_modules`, and `vendor` exclusion.
+- [ ] 4. Implement `run_syntax` step using `bash -n` across discovered files, aggregate full diagnostics to a per-step log, and print truncated output + `Fix:` hint on failure.
+- [ ] 5. Implement `run_lint` step using `shellcheck --severity=${SHELLCHECK_SEVERITY}` across discovered files, aggregate logs, and produce shellcheck wiki link(s) in `Fix:` on failure.
+- [ ] 6. Ensure command path supports `SHELLCHECK_SEVERITY` override and default severity semantics while keeping required `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST` behavior intact.
+- [ ] 7. Create `skills/bash-agent/SKILL.md` with trigger language and `allowed-tools` entries for RUN knobs, `SHELLCHECK_SEVERITY`, `CHANGED_FILES`, and shared controls.
+- [ ] 8. Add scenario fixtures under `tests/bash-agent/clean` and `tests/bash-agent/issues`, including `scenario.env` and fixture scripts.
+- [ ] 9. Validate fixture behavior: `clean` exits 0 with `shellcheck`+`bash` available, and `issues` exits 1 for intentional lint violation and/or shell syntax issue.
+- [ ] 10. Update `install.sh` to include `bash-agent` in `SKILLS`, add optional dependency check messaging for `shellcheck`, and add `bash-agent` line to `print_agents_md_snippet`.
+- [ ] 11. Update `README.md` with bash-agent row in Available Agents and usage examples showing `syntax`, `lint`, and `all`.
+- [ ] 12. Run `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent` locally in validation slice, then fix and rerun until green.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 

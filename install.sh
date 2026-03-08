@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="cargo-agent npm-agent py-agent terra-agent"
+SKILLS="bash-agent cargo-agent npm-agent py-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -289,6 +289,15 @@ check_optional_deps() {
   info "Checking optional dependencies..."
   all_ok=1
 
+  if skill_selected "bash-agent"; then
+    if command -v shellcheck >/dev/null 2>&1; then
+      info "  Found: shellcheck"
+    else
+      warn "  Missing: shellcheck (needed by bash-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "cargo-agent"; then
     if command -v jq >/dev/null 2>&1; then
       info "  Found: jq"
@@ -363,6 +372,9 @@ print_agents_md_snippet() {
 
   for skill in $SELECTED_SKILLS; do
     case "$skill" in
+      bash-agent)
+        echo "- Bash/Shell: use \`/bash-agent\` (syntax/lint)."
+        ;;
       cargo-agent)
         echo "- Rust: use \`/cargo-agent\` (fmt/check/clippy/test)."
         ;;

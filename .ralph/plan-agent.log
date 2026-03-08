@@ -8,7 +8,7 @@ approval: never
 sandbox: workspace-write [workdir, /tmp, $TMPDIR]
 reasoning effort: xhigh
 reasoning summaries: none
-session id: 019cce63-eb5b-7e23-9c2e-f0a5464a6fa0
+session id: 019cce6c-b660-7083-95ac-64b5faa7451e
 --------
 user
 You are the PLAN agent for RALPH (Recursive Autonomous Loop with Planning & Human-oversight).
@@ -63,92 +63,148 @@ Extract shared boilerplate from existing agents into a common library, then ship
 
 
 **Current Specification:**
-# Spec 02: Refactor Existing Agents to Use Shared Library
+# Spec 03: bash-agent
 
 ## Objective
 
-Refactor cargo-agent, npm-agent, and terra-agent to source `lib/x-agent-common.sh` instead of duplicating boilerplate. Output must be identical before and after.
+Create a new bash-agent that validates shell scripts with `bash -n` (syntax checking) and `shellcheck` (linting).
 
 ## Source
 
-- **PRD User Story:** US-001 (completion — refactor portion)
-- **Functional Requirements:** FR-1
+- **PRD User Story:** US-002
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 
 ## User Story Context
 
-> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
-
-This spec completes US-001 by refactoring the three existing agents to use the shared lib created in spec 01.
+> As a developer, I want a bash-agent that validates shell scripts for syntax errors and lint issues so I can catch problems before CI.
 
 ## Functional Requirements
 
-- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs (KEEP_DIR, MAX_LINES, FAIL_FAST, TMPDIR_ROOT, CHANGED_FILES)
+- FR-3: Per-step toggles (RUN_SYNTAX, RUN_LINT)
+- FR-4: Structured output (Step/Result/Fix/Overall)
+- FR-5: --fail-fast and --help support
+- FR-6: Required tools checked with need()
+- FR-11: SKILL.md with trigger language
+- FR-12: install.sh updated
+- FR-13: Scenario test fixtures
 
 ## Components
 
-- **Modify:** `skills/cargo-agent/scripts/cargo-agent.sh`
-- **Modify:** `skills/npm-agent/scripts/npm-agent.sh`
-- **Modify:** `skills/terra-agent/scripts/terra-agent.sh`
+- **Create:** `skills/bash-agent/scripts/bash-agent.sh`
+- **Create:** `skills/bash-agent/SKILL.md`
+- **Create:** `tests/bash-agent/clean/scenario.env` + fixture files
+- **Create:** `tests/bash-agent/issues/scenario.env` + fixture files
+- **Modify:** `install.sh` (add bash-agent to SKILLS list + dep checks)
+- **Modify:** `README.md` (add bash-agent to Available Agents table + usage)
 
 ## Implementation Details
 
-For each of the three existing agents:
+### Script: `bash-agent.sh`
 
-1. **Add source line** at the top (after `set -euo pipefail`):
+**Header:**
 ```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# bash-agent: lean shell script validation for coding agents
+# deps: bash, shellcheck
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../../../lib"
 # shellcheck source=../../../lib/x-agent-common.sh
 source "${LIB_DIR}/x-agent-common.sh"
 ```
 
-2. **Remove duplicated code** that now lives in the shared lib:
-   - `hr()` function
-   - `step()` function and `STEP_START_SECONDS` variable
-   - `fmt_elapsed()` function
-   - `should_continue()` function
-   - `need()` function
-   - `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES` variable defaults
-   - CI-aware `MAX_LINES` detection block
-   - Cleanup trap function and `trap cleanup EXIT` line
-   - Workflow lock block (flock with Perl fallback)
+**Agent-specific knobs:**
+```bash
+RUN_SYNTAX="${RUN_SYNTAX:-1}"
+RUN_LINT="${RUN_LINT:-1}"
+SHELLCHECK_SEVERITY="${SHELLCHECK_SEVERITY:-warning}"
+```
 
-3. **Replace with calls to shared setup functions:**
-   - Call `setup_outdir "<agent-name>"` instead of inline mktemp + cleanup trap
-   - Call `setup_lock "<agent-name>"` instead of inline flock block
-   - Use `print_overall "$overall_ok"` instead of inline final output block (if applicable)
+**Required tools:** `need bash`, `need shellcheck`
 
-4. **Keep agent-specific code intact:**
-   - Agent-specific `RUN_<STEP>` variables (these override defaults after sourcing)
-   - All `run_<step>()` functions
-   - The `main()` function and command dispatch
-   - The `usage()` function
-   - Any agent-specific helpers (e.g., `detect_pm()` in npm-agent)
+**File discovery:**
+- If `CHANGED_FILES` is set, filter to `.sh` files that exist
+- Otherwise, find all `.sh` files recursively (excluding common dirs like `node_modules`, `.git`, `vendor`)
+- Print count of discovered files
 
-### Key constraint: Output parity
+**Step: syntax**
+- Run `bash -n` on each discovered `.sh` file
+- Collect failures, log full output
+- On failure: `Fix: resolve syntax errors above, then re-run: /bash-agent syntax`
 
-The refactored agents must produce **byte-identical output** for the same inputs. Run each agent's scenario tests before and after to verify. The only acceptable differences are timing values (`Time: Xs`).
+**Step: lint**
+- Run `shellcheck --severity=$SHELLCHECK_SEVERITY` on all discovered `.sh` files
+- On failure: extract shellcheck error codes and include wiki links in Fix: hint
+  - e.g. `Fix: see https://www.shellcheck.net/wiki/SC2086 — resolve issues, then re-run: /bash-agent lint`
+- Log full output to disk
+
+**Commands:** `syntax`, `lint`, `all` (default runs both)
+
+### SKILL.md
+
+Follow the npm-agent SKILL.md pattern. Key trigger language:
+```
+Use when: running shell/bash script checks (syntax, lint), verifying shell scripts before committing,
+or when the user asks to run shellcheck, bash checks, or validate shell scripts.
+Triggers on: bash agent, shell agent, shellcheck, bash lint, shell checks, verify shell scripts.
+```
+
+Allowed-tools must include patterns for `SHELLCHECK_SEVERITY=*`.
+
+### Scenario Tests
+
+**clean fixture (`tests/bash-agent/clean/`):**
+- `scenario.env`: EXPECT_EXIT=0, REQUIRED_TOOLS="bash shellcheck"
+- `scripts/good.sh`: a valid, clean shell script that passes both bash -n and shellcheck
+
+**issues fixture (`tests/bash-agent/issues/`):**
+- `scenario.env`: EXPECT_EXIT=1, REQUIRED_TOOLS="bash shellcheck"
+- `scripts/bad.sh`: a shell script with syntax errors or shellcheck violations
+  - e.g., unquoted variable `$foo` used in a context that triggers SC2086
+
+### install.sh
+
+- Add `bash-agent` to `SKILLS` variable
+- Add dep check for `shellcheck` under bash-agent selection
+- Add snippet line for bash-agent in `print_agents_md_snippet`
+
+### README.md
+
+- Add row to Available Agents table: `bash-agent | Bash/Shell | syntax (bash -n), lint (shellcheck)`
+- Add usage section with examples
 
 ## Test Strategy
 
-- Run `tests/run-scenarios.sh cargo-agent` — all scenarios pass
-- Run `tests/run-scenarios.sh npm-agent` — all scenarios pass
-- Run `tests/run-scenarios.sh terra-agent` — all scenarios pass
-- `shellcheck --severity=warning` passes on all three refactored scripts
-- Verify each script is smaller than before (boilerplate removed)
+- `tests/run-scenarios.sh bash-agent` — clean passes (exit 0), issues fails (exit 1)
+- `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` passes
+- Manual test: run in a directory with mixed good/bad .sh files
+- Verify `CHANGED_FILES` scoping works (only checks listed files)
+- Verify `SHELLCHECK_SEVERITY` knob works (e.g., set to `error` to ignore warnings)
 
 ## Dependencies
 
-- Spec 01 (shared library must exist)
+- Spec 01 (shared library)
+- Spec 02 (refactored agents — ensures shared lib integration pattern is proven)
 
 ## Acceptance Criteria
 
-- [ ] All three agents source `lib/x-agent-common.sh`
-- [ ] Duplicated boilerplate removed from all three agents
-- [ ] `tests/run-scenarios.sh` passes for cargo-agent, npm-agent, terra-agent
-- [ ] `shellcheck --severity=warning` passes on all three scripts
-- [ ] Output format is identical before/after (verified by scenario tests)
-- [ ] Each agent script is measurably smaller (fewer lines)
+- [ ] `skills/bash-agent/scripts/bash-agent.sh` exists and is executable
+- [ ] Sources `lib/x-agent-common.sh`
+- [ ] `syntax` step runs `bash -n` on all `.sh` files (or scoped via CHANGED_FILES)
+- [ ] `lint` step runs `shellcheck` on all `.sh` files (or scoped)
+- [ ] Failed shellcheck results include wiki link in Fix: hint
+- [ ] Commands: `syntax`, `lint`, `all` (default runs both)
+- [ ] `--help` prints usage
+- [ ] `SKILL.md` exists with trigger language and allowed-tools patterns
+- [ ] `install.sh` updated with bash-agent
+- [ ] `README.md` updated with bash-agent
+- [ ] `tests/bash-agent/clean/` scenario passes (exit 0)
+- [ ] `tests/bash-agent/issues/` scenario fails (exit 1)
+- [ ] `shellcheck --severity=warning` passes on the script
 
 
 **Lessons from Previous Iterations:**
@@ -156,11 +212,11 @@ No lessons recorded yet.
 
 **Feedback from Previous Review:**
 DECISION: SHIP
-ITERATION: 3
-SPEC: 01-shared-library-extract.md
+ITERATION: 4
+SPEC: 02-refactor-existing-agents.md
 
 SUMMARY:
-Implemented shared-library extraction and install-time library packaging are coherent with the spec’s scope and acceptance criteria for this phase. The runtime helper API in `lib/x-agent-common.sh` is side-effect free on source and aligns with the expected boilerplate extraction boundaries.
+Refactor completed cleanly: all three target agents now source `lib/x-agent-common.sh`, use shared setup/lock/summarization helpers where intended, and preserve agent-specific step logic. The mandatory scenario checks and lint pass, so acceptance criteria appear satisfied for this spec.
 
 BLOCKERS:
 None
@@ -169,8 +225,7 @@ MAJOR ISSUES:
 None
 
 MINOR ISSUES:
-- `lib/x-agent-common.sh` currently does not provide a `resolve_lib_dir()` helper; library consumers must rely on caller-local path conventions (`../../../lib`). This is acceptable for this phase but is a slight re-coupling point for future agents when agent script location patterns diverge.
-- `print_result` treats `fix_hint` as optional (`print_result() { ... if [[ -n "$fix_hint" ]]; then Fix ... fi }`) so fail paths can omit guidance unless callers consistently provide one.
+None
 
 NEXT STEPS:
 Proceed to next spec
@@ -404,32 +459,33 @@ Make opinionated recommendations based on the lessons provided. Do NOT ask quest
 
 mcp startup: no servers
 codex
-Got it. I’ll first read `.ralph/exploration.md` (if present) and the core references for this spec in parallel, then consolidate findings into an updated orientation file before drafting the full plan in `.ralph/work-plan.txt`. After that I’ll run `ralph validate plan` and only then produce the final plan output summary.
+I’ll do a fast parallel sweep of the existing agent patterns and test harness first—`lib/x-agent-common.sh`, current agent scripts (`npm/cargo/terra`), `install.sh`, `README.md`, and scenario layout—then draft `.ralph/exploration.md` and a complete implementation plan in `.ralph/work-plan.txt`, followed by `ralph validate plan`.
 exec
-/bin/zsh -lc "sed -n '1,220p' AGENTS.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "if [ -f .ralph/exploration.md ]; then sed -n '1,260p' .ralph/exploration.md; else echo '.ralph/exploration.md missing'; fi" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "rg --files | rg '02-refactor-existing-agents\\.md|01-shared-library-extract\\.md|03-bash-agent\\.md|04-go-agent\\.md|05-gha-agent\\.md|06-helm-agent\\.md|07-kube-agent\\.md|08-docker-agent\\.md|09-ansible-agent\\.md|10-sql-agent\\.md'" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-# Exploration Notes
+/bin/zsh -lc "[ -f .ralph/exploration.md ] && sed -n '1,260p' .ralph/exploration.md || true" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' AGENTS.md" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+#!/usr/bin/env bash
+set -euo pipefail
 
-## Key Files & Roles
+# npm-agent: lean Node.js workflow output for coding agents
+# deps: bash, mktemp
+# optional: biome, eslint, prettier
 
-- `lib/x-agent-common.sh` — shared boilerplate library sourced by all agents; provides env defaults, step/result/overall formatting, need(), setup_outdir(), setup_lock(), and should_continue(). Side-effect-free on source.
-- `AGENTS.md` — repository guardrails for Bash 3.2 compatibility, output contract, and workflow expectations.
-- `skills/npm-agent/scripts/npm-agent.sh` — current agent pattern with shared defaults, step timing, cleanup, and `--help` usage.
-- `skills/cargo-agent/scripts/cargo-agent.sh` — shows lock+cleanup precedence, nextest integration, and verbose `overall_ok` flow.
-- `skills/terra-agent/scripts/terra-agent.sh` — shows optional tool skip behavior and terraform-specific lock/cleanup conventions.
-- `skills/*/SKILL.md` — shared metadata schema including `allowed-tools` and trigger language.
-- `install.sh` — local vs remote install modes, optional dependency checks, and destination patching.
-- `tests/run-scenarios.sh` — authoritative test harness contract for all agents; shellcheck plus scenario fixture execution.
-- `tests/*/scenario.env` — scenario metadata (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, `REQUIRED_TOOLS`).
-- `tests/cargo-agent/flock/flock-test.sh` — current lock integration test for waiting on lock acquisition.
-- `docs/agents/add-x-agent.md` — how new agents are expected to be structured, including boilerplate expectations and install updates.
-- `docs/agents/scenario-tests.md` — fixture conventions and execution format.
-- `docs/agents/definition-of-done.md` — acceptance contract for each agent.
-- `docs/testing.md` — testing and CI matrix expectations.
-- `.github/workflows/ci.yml` — shellcheck job and per-agent scenario execution matrix.
-- `README.md` — user-facing discoverability for available agents and quick command references.
- succeeded in 53ms:
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
+RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
+RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
+RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
+RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
+RUN_BUILD="${RUN_BUILD:-1}"       # set to 0 to skip build
+
+setup_outdir "npm-agent"
+
+ succeeded in 52ms:
 # x-agent Contributor Guide
 
 This repository contains lean workflow runners for coding agents.
@@ -450,80 +506,7 @@ Read this file first, then open only the linked docs you need.
 Run `tests/run-scenarios.sh` — it runs shellcheck then all scenario fixtures.
 Each agent needs `clean` (pass) and `issues` (fail) fixtures. CI runs the
 same script across tool-combination matrices (e.g. with/without nextest).
- exited 1 in 53ms:
-
-codex
-I’ve confirmed the repo conventions and pulled prior exploration notes. Next I’m locating the exact spec files and current agent scripts to make sure the plan references the right files and dependencies.
-exec
-/bin/zsh -lc "sed -n '1,260p' .ralph/specs/01-shared-library-extract.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' .ralph/specs/02-refactor-existing-agents.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "rg --files | rg '("'^|/)specs/.+'"\\.md"'$|''^'"\\.ralph/specs/.+\\.md"'$|''^skills/.+/scripts/.+'"\\.sh"'$|''^tests/.+/(scenario'"\\.env|agent\\.sh|run-scenarios\\.sh)"'$'"'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Spec 01: Extract Shared Library
-
-## Objective
-
-Create `lib/x-agent-common.sh` containing all boilerplate functions duplicated across existing agents. This is a new additive file — no existing agents are modified in this spec.
-
-## Source
-
-- **PRD User Story:** US-001 (partial — extraction only, refactor in spec 02)
-- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10
-
-## User Story Context
-
-> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
-
-This spec covers only the creation of the shared library. The refactoring of existing agents to use it is in spec 02.
-
-## Functional Requirements
-
-- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
- succeeded in 53ms:
-# Spec 02: Refactor Existing Agents to Use Shared Library
-
-## Objective
-
-Refactor cargo-agent, npm-agent, and terra-agent to source `lib/x-agent-common.sh` instead of duplicating boilerplate. Output must be identical before and after.
-
-## Source
-
-- **PRD User Story:** US-001 (completion — refactor portion)
-- **Functional Requirements:** FR-1
-
-## User Story Context
-
-> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
-
-This spec completes US-001 by refactoring the three existing agents to use the shared lib created in spec 01.
-
-## Functional Requirements
-
-- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
- succeeded in 51ms:
-skills/py-agent/scripts/py-agent.sh
-skills/npm-agent/scripts/npm-agent.sh
-skills/cargo-agent/scripts/cargo-agent.sh
-skills/terra-agent/scripts/terra-agent.sh
-tests/py-agent/issues/scenario.env
-tests/py-agent/clean/scenario.env
-tests/npm-agent/issues/scenario.env
-tests/npm-agent/clean/scenario.env
-tests/cargo-agent/issues/scenario.env
-tests/cargo-agent/test-fail/scenario.env
-tests/cargo-agent/flock/scenario.env
-tests/cargo-agent/clean/scenario.env
-tests/terra-agent/issues/scenario.env
-tests/terra-agent/plan-safe/scenario.env
-tests/terra-agent/clean/scenario.env
-codex
-I’ve got the target spec context. I’ll now inspect the shared library, the three agent scripts, and the scenario runner/docs in parallel so the plan can map exact coupling points and output behavior safely.
-exec
-/bin/zsh -lc "sed -n '1,360p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,320p' lib/x-agent-common.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,360p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,420p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,280p' docs/agents/scenario-tests.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,360p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+ succeeded in 52ms:
 #!/usr/bin/env bash
 # x-agent-common.sh — shared boilerplate for x-agent workflow runners.
 # Source this file from agent scripts; it produces no output or side effects.
@@ -544,7 +527,33 @@ if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
 else
   MAX_LINES="${MAX_LINES:-40}"
 fi
- succeeded in 52ms:
+ succeeded in 53ms:
+# x-agent Exploration Notes
+
+## Key Files & Roles
+
+- `lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
+- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
+- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
+- `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+- `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+- `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+- `docs/agents/add-x-agent.md`: canonical structure guide for script boilerplate, helpers, output contract, and agent metadata.
+- `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
+- `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
+- `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
+- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
+
+## Patterns & Conventions
+
+codex
+I’ve confirmed the shared library and the npm agent pattern already match the planned shape. Next I’m pulling the remaining reference points—other refactored agents, scenario scaffolding, and install/README contracts—so the plan is aligned with project conventions and avoids regressions.
+exec
+/bin/zsh -lc "sed -n '1,280p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '280,620p' skills/npm-agent/scripts/npm-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,300p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -552,41 +561,41 @@ set -euo pipefail
 # deps: bash, mktemp, terraform
 # optional: tflint
 
-KEEP_DIR="${KEEP_DIR:-0}"              # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
 RUN_FMT="${RUN_FMT:-1}"                # set to 0 to skip fmt
 RUN_INIT="${RUN_INIT:-1}"              # set to 0 to skip init
 RUN_VALIDATE="${RUN_VALIDATE:-1}"      # set to 0 to skip validate
 RUN_LINT="${RUN_LINT:-1}"              # set to 0 to skip lint
 RUN_PLAN_SAFE="${RUN_PLAN_SAFE:-0}"    # set to 1 to run plan-safe in all
 FMT_MODE="${FMT_MODE:-check}"          # check|fix
+FMT_RECURSIVE="${FMT_RECURSIVE:-1}"    # set to 0 to disable recursive fmt
+TFLINT_RECURSIVE="${TFLINT_RECURSIVE:-1}" # set to 0 to disable recursive tflint
  succeeded in 52ms:
-#!/usr/bin/env bash
-set -euo pipefail
 
-# npm-agent: lean Node.js workflow output for coding agents
-# deps: bash, mktemp
-# optional: biome, eslint, prettier
+Env knobs:
+  MAX_LINES=40           # printed lines per step (unlimited in CI)
+  KEEP_DIR=0|1           # keep temp log dir even on success
+  FAIL_FAST=0|1          # same as --fail-fast flag
+  RUN_FORMAT=0|1
+  RUN_LINT=0|1
+  RUN_TYPECHECK=0|1
+  RUN_TESTS=0|1
+  RUN_BUILD=0|1
+  CHANGED_FILES="f1 f2"   # scope lint/format to changed files (fallback tools only)
 
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
-RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
-RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
-RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
-RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
-RUN_BUILD="${RUN_BUILD:-1}"       # set to 0 to skip build
-FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
- succeeded in 51ms:
+Auto-detection:
+  - Package manager: detects bun, pnpm, yarn, or npm from lock files
+  - Format: tries package.json scripts (format, fmt), then biome, then prettier
+  - Lint: tries package.json scripts (lint), then biome, then eslint
+  - Typecheck: tries package.json scripts (typecheck, tsc), then tsc --noEmit
+  - Tests: runs package.json "test" script
+  - Build: runs package.json "build" script
+
+ succeeded in 52ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -594,41 +603,26 @@ set -euo pipefail
 # deps: bash, mktemp, jq
 # optional: cargo-nextest (for tests)
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
 JQ_BIN="${JQ_BIN:-jq}"
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 RUN_CLIPPY="${RUN_CLIPPY:-1}"     # set to 0 to skip clippy
 RUN_FMT="${RUN_FMT:-1}"           # set to 0 to skip fmt
 RUN_CHECK="${RUN_CHECK:-1}"       # set to 0 to skip check
 RUN_SQLX="${RUN_SQLX:-1}"         # set to 0 to skip sqlx cache verify
- succeeded in 51ms:
-# Scenario Tests
-
-Scenario tests provide fixture projects that run each agent in known states.
-
-## Directory Layout
-
-```text
-tests/
-  run-scenarios.sh
-  <agent-name>/
-    clean/
-      scenario.env
-      ...fixture files...
-    issues/
-      scenario.env
-      ...fixture files...
-```
-
-## scenario.env contract
-
- succeeded in 52ms:
+USE_NEXTEST="${USE_NEXTEST:-auto}" # auto|1|0
+RUN_INTEGRATION="${RUN_INTEGRATION:-0}" # set to 1 to run integration tests
+codex
+I have enough signal on agent style now; I’m pulling the remaining references for exact command contracts (`usage`, argument parsing, tests docs, scenario fixtures, and install/readme wiring) so the plan maps to the repository’s real entry points.
+exec
+/bin/zsh -lc "sed -n '1,320p' tests/run-scenarios.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' docs/agents/add-x-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg -n "SKILLS|print_agents_md_snippet|bash-agent|shellcheck" install.sh' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'rg -n "Available Agents|Usage|bash-agent|--fail-fast|syntax|lint" README.md' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -649,16 +643,7 @@ Examples:
   tests/run-scenarios.sh
   tests/run-scenarios.sh cargo-agent
   tests/run-scenarios.sh npm-agent/issues
-codex
-I now have enough structure on shared helpers, agent behavior, and the scenario harness. I’m pulling the remaining spec-facing docs/tests plus `install.sh` so the plan explicitly covers fixture expectations and release surface.
-exec
-/bin/zsh -lc "sed -n '1,260p' docs/agents/add-x-agent.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,280p' docs/contributing.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' docs/agents/definition-of-done.md" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/npm-agent/clean/scenario.env && printf '\\n---\\n'; sed -n '1,220p' tests/npm-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' install.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/cargo-agent/clean/scenario.env && printf '\\n---\\n'; sed -n '1,220p' tests/cargo-agent/issues/scenario.env && printf '\\n---\\n'; sed -n '1,220p' tests/cargo-agent/flock/scenario.env" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,220p' tests/terra-agent/clean/scenario.env && printf '\\n---\\n'; sed -n '1,220p' tests/terra-agent/issues/scenario.env && printf '\\n---\\n'; sed -n '1,220p' tests/terra-agent/plan-safe/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+ succeeded in 53ms:
 # Add an x-agent
 
 Use this workflow when adding a new `*-agent` skill and runner script.
@@ -679,64 +664,139 @@ Keep naming consistent:
 - Script name: `<name>-agent.sh`
 - Temp log prefix: `<name>-agent.XXXXXX`
 
- succeeded in 51ms:
-SCENARIO_NAME="npm-agent clean"
-AGENT_SCRIPT="skills/npm-agent/scripts/npm-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="0"
-REQUIRED_TOOLS="node npm"
-
-
+ succeeded in 53ms:
+3:Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+9:- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+14:## Available Agents
+19:| `npm-agent` | Node.js | format, lint, typecheck, test, build |
+20:| `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
+21:| `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
+59:## Usage
+74:npm-agent.sh                # full suite: format + lint + typecheck + test + build
+75:npm-agent.sh lint           # lint only
+80:npm-agent auto-detects your package manager (bun, pnpm, yarn, npm) and finds formatters/linters from package.json scripts or common tools (biome, eslint, prettier, tsc).
+85:py-agent.sh                # full suite: format + lint + typecheck + test
+87:py-agent.sh lint           # lint only
+97:terra-agent.sh                              # full suite: fmt(check) + validate + lint
+123:# Only run lint and typecheck
+ succeeded in 53ms:
+14:CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
+15:CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+27:SKILLS="cargo-agent npm-agent py-agent terra-agent"
+28:SELECTED_SKILLS=""
+63:  CODEX_SKILLS_DIR   Override Codex skills root (default: ~/.codex/skills)
+64:  CLAUDE_SKILLS_DIR  Override Claude skills root (default: ~/.claude/skills)
+121:  case " ${SELECTED_SKILLS} " in
+129:  if [ -z "$SELECTED_SKILLS" ]; then
+130:    SELECTED_SKILLS="$skill"
+132:    SELECTED_SKILLS="${SELECTED_SKILLS} ${skill}"
+138:    SELECTED_SKILLS="$SKILLS"
+143:  for skill in $SKILLS; do
+205:  for skill in $SELECTED_SKILLS; do
+353:print_agents_md_snippet() {
+354:  if [ -z "$SELECTED_SKILLS" ]; then
+364:  for skill in $SELECTED_SKILLS; do
+424:if [ -z "$SELECTED_SKILLS" ]; then
+439:  if prompt_yes_no "Install skills to ${CLAUDE_SKILLS_DIR}?" yes; then
+440:    install_lib_to_root "$CLAUDE_SKILLS_DIR"
+441:    for skill in $SELECTED_SKILLS; do
+exec
+/bin/zsh -lc "sed -n '1,280p' docs/agents/scenario-tests.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,320p' skills/py-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,280p' docs/testing.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '260,520p' docs/agents/add-x-agent.md" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ---
-SCENARIO_NAME="npm-agent issues"
-AGENT_SCRIPT="skills/npm-agent/scripts/npm-agent.sh"
-RUN_ARGS="all"
-EXPECT_EXIT="1"
-REQUIRED_TOOLS="node npm"
+name: py-agent
+description: |
+  Run py-agent.sh — a lean Python workflow runner that produces agent-friendly output.
+  Use when: running Python checks (format, lint, typecheck, test), verifying Python code before committing,
+  or when the user asks to run Python checks, lint, format, or test a Python project.
+  Triggers on: py agent, run python checks, python checks, ruff mypy pytest, verify python code, run py checks.
+context: fork
+allowed-tools:
+  - Bash(scripts/py-agent.sh*)
+  - Bash(RUN_*=* scripts/py-agent.sh*)
+  - Bash(MAX_LINES=* scripts/py-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/py-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/py-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/py-agent.sh*)
+---
+
+# Py Agent
+
+Run the `py-agent.sh` script for lean, structured Python workflow output designed for coding agents.
+ succeeded in 52ms:
+## 10) Update repository metadata
+
+Update:
+
+- `README.md` (agent table + usage examples)
+- `install.sh` (`SKILLS` list and optional dependency checks)
+
+## 11) Add scenario tests
+
+Add at least:
+
+- `tests/<name>-agent/clean/` for a passing fixture
+- `tests/<name>-agent/issues/` for a failing fixture
+
+Each scenario needs a `scenario.env`. See `docs/agents/scenario-tests.md`.
+
+## 12) Validate against definition of done
+
+Run through `docs/agents/definition-of-done.md` before commit.
 
  succeeded in 52ms:
-# Definition of Done for a New x-agent
+# Testing
 
-An agent is done only when all items below are complete.
+All testing — local and CI — runs through `tests/run-scenarios.sh`.
 
-## Skill and Script
+## Local Testing
 
-- `skills/<name>-agent/SKILL.md` exists with accurate trigger language.
-- `skills/<name>-agent/SKILL.md` `allowed-tools` includes patterns for all env knobs (`RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, plus any agent-specific knobs).
-- `skills/<name>-agent/scripts/<name>-agent.sh` exists and is executable.
-- Script starts with `set -euo pipefail`.
-- Script has `--help`/`help`/`-h` usage output that works without project context (resolved before project-existence checks).
+```bash
+# Everything (shellcheck + all scenario fixtures)
+tests/run-scenarios.sh
 
-## Output Contract
+# Filter to one agent
+tests/run-scenarios.sh cargo-agent
 
-- Each step emits `Step:`, `Result: PASS|FAIL|SKIP`, and `Time: Xs`.
-- Each `Result: FAIL` is followed by a `Fix:` line — suggests an auto-fix command first (if one exists), then tells how to retest via the agent.
-- On failure, prints truncated diagnostics (first `MAX_LINES` lines) and saves full logs to disk with path printed.
-- Final output is `Overall: PASS|FAIL` and `Logs: <path>`.
+# Just shellcheck
+tests/run-scenarios.sh shellcheck
 
-## Behavior
+# List available scenarios
+tests/run-scenarios.sh --list
+```
+
  succeeded in 52ms:
-# Contributing to x-agent
+# Scenario Tests
 
-Standards and conventions for working in this repository.
+Scenario tests provide fixture projects that run each agent in known states.
 
-## Tech Standards
+## Directory Layout
 
-### Bash 3.2 Compatibility
+```text
+tests/
+  run-scenarios.sh
+  <agent-name>/
+    clean/
+      scenario.env
+      ...fixture files...
+    issues/
+      scenario.env
+      ...fixture files...
+```
 
-All shell scripts must work with **Bash 3.2**, which ships as the default
-on macOS. This means:
+## scenario.env contract
 
-- **No associative arrays** (`local -A` / `declare -A`) — use string variables
-  with `grep -Fxq` for dedup, or indexed arrays.
-- **No `${!arr[@]}` on associative arrays** — iterate indexed arrays or
-  newline-delimited strings instead.
-- **No `readarray` / `mapfile`** — use `while read` loops.
-- **No `|&`** (pipe stderr) — use `2>&1 |` instead.
-- **No `;&` or `;;&`** in `case` fall-through — each pattern must end with `;;`.
-- **Empty arrays are unbound under `set -u`** — guard with
-  `${arr[@]+"${arr[@]}"}` or check `${#arr[@]}` before expanding.
- succeeded in 52ms:
+codex
+I now have the process contracts; I’ll inspect the exact install script branches and README agent sections so the plan includes precise edits (no guessing on formatting or ordering constraints).
+exec
+/bin/zsh -lc "sed -n '1,240p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '240,460p' install.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,240p' README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '240,360p' README.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+ succeeded in 53ms:
 #!/bin/sh
 set -eu
 
@@ -758,26 +818,76 @@ SKIP_DEPS=0
 INSTALL_CODEX=1
 INSTALL_CLAUDE=1
  succeeded in 53ms:
-SCENARIO_NAME="terra-agent clean"
-AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
+# x-agent
+
+Every time your coding agent runs a lint or test cycle, it burns thousands of tokens on compilation progress and passing test names. x-agent cuts 90-97% of that noise — your agent gets structured pass/fail, you keep your context window for actual code.
+
+## Why?
+
+Standard build tools produce walls of text. Agents waste context window parsing noise. x-agent scripts give:
+
+- **Structured output** — `Step: lint`, `Result: PASS`, `Overall: FAIL`
+- **Truncated diagnostics** — only the first N lines of errors/warnings (configurable)
+- **Full logs on disk** — temp dir path printed so the agent can read more if needed
+- **Consistent interface** — same env knobs and output format across all runners
+
+## Available Agents
+
+| Agent | Toolchain | Steps |
+|-------|-----------|-------|
+| `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+| `npm-agent` | Node.js | format, lint, typecheck, test, build |
+| `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
+ succeeded in 53ms:
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/skills/${skill}/." "$target/"
+    chmod +x "${target}/scripts/"*.sh 2>/dev/null || true
+    info "Installed ${skill} to ${target}"
+  fi
+}
+
+# Install the shared library to a skills root so agent scripts can source it.
+# For local installs, symlink the lib/ directory.
+# For remote installs, copy the fetched lib/ directory.
+install_lib_to_root() {
+  root="$1"
+  target="${root}/lib"
+
+  mkdir -p "$root"
+  rm -rf "$target"
+
+  if [ "$SOURCE_MODE" = "local" ]; then
+    ln -s "${SOURCE_DIR}/lib" "$target"
+codex
+I’ve got the global hooks and metadata format. Next I’ll confirm existing fixture layout conventions by checking current tests for another agent so the plan uses the exact naming, naming of scripts, and fixture content style that `run-scenarios.sh` expects.
+exec
+/bin/zsh -lc 'ls -1 tests' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,240p' tests/cargo-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/terra-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,240p' tests/py-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/terra-agent/clean/scenario.env" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,240p' tests/cargo-agent/issues/scenario.env" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+SCENARIO_NAME="cargo-agent issues"
+AGENT_SCRIPT="skills/cargo-agent/scripts/cargo-agent.sh"
 RUN_ARGS="all"
-EXPECT_EXIT="0"
-REQUIRED_TOOLS="terraform"
+EXPECT_EXIT="1"
+REQUIRED_TOOLS="cargo jq"
 
-
----
+ succeeded in 53ms:
 SCENARIO_NAME="terra-agent fmt issues"
 AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
 RUN_ARGS="fmt-check"
 EXPECT_EXIT="1"
 REQUIRED_TOOLS="terraform"
 
-
----
-SCENARIO_NAME="terra-agent plan-safe"
-AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
-RUN_ARGS="plan-safe"
-EXPECT_EXIT="0"
+ succeeded in 53ms:
+README.md
+cargo-agent
+npm-agent
+py-agent
+run-scenarios.sh
+terra-agent
  succeeded in 53ms:
 SCENARIO_NAME="cargo-agent clean"
 AGENT_SCRIPT="skills/cargo-agent/scripts/cargo-agent.sh"
@@ -785,75 +895,485 @@ RUN_ARGS="all"
 EXPECT_EXIT="0"
 REQUIRED_TOOLS="cargo jq"
 
-
----
-SCENARIO_NAME="cargo-agent issues"
-AGENT_SCRIPT="skills/cargo-agent/scripts/cargo-agent.sh"
+ succeeded in 53ms:
+SCENARIO_NAME="py-agent clean"
+AGENT_SCRIPT="skills/py-agent/scripts/py-agent.sh"
 RUN_ARGS="all"
-EXPECT_EXIT="1"
-REQUIRED_TOOLS="cargo jq"
-
-
----
-SCENARIO_NAME="cargo-agent flock"
-AGENT_SCRIPT="tests/cargo-agent/flock/flock-test.sh"
-RUN_ARGS="run"
 EXPECT_EXIT="0"
+REQUIRED_TOOLS="python3"
+ succeeded in 53ms:
+SCENARIO_NAME="terra-agent clean"
+AGENT_SCRIPT="skills/terra-agent/scripts/terra-agent.sh"
+RUN_ARGS="all"
+EXPECT_EXIT="0"
+REQUIRED_TOOLS="terraform"
+
 codex
-I’ve gathered the key implementation and test contracts. Next I’ll check existing `.ralph` planning/insight files to append the required exploration update in the expected structure and preserve continuity with prior plans.
+I’ve confirmed fixture contracts (`SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`) and that many agents rely on lightweight fixture trees. I’ll inspect how issue cases are represented in existing directories to mirror their style for bash-agent.
 exec
-/bin/zsh -lc "sed -n '1,320p' .ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "if [ -f .ralph/automation-opportunities.md ]; then sed -n '1,260p' .ralph/automation-opportunities.md; else echo 'MISSING'; fi" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "if [ -f .ralph/lessons.jsonl ]; then sed -n '1,220p' .ralph/lessons.jsonl; else echo 'MISSING'; fi" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "if [ -f .ralph/ralph-actions.jsonl ]; then sed -n '1,220p' .ralph/ralph-actions.jsonl; else echo 'MISSING'; fi" in /Users/chrisraethke/projects/x-agent exited 1 in 52ms:
-sed: .ralph/work-plan.txt: No such file or directory
- succeeded in 50ms:
-MISSING
- succeeded in 50ms:
-MISSING
+/bin/zsh -lc 'find tests/npm-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'find tests/terra-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'find tests/cargo-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc 'find tests/py-agent -maxdepth 3 -type f | sort' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+tests/cargo-agent/clean/Cargo.lock
+tests/cargo-agent/clean/Cargo.toml
+tests/cargo-agent/clean/scenario.env
+tests/cargo-agent/clean/src/lib.rs
+tests/cargo-agent/clean/target/.rustc_info.json
+tests/cargo-agent/flock/flock-test.sh
+tests/cargo-agent/flock/scenario.env
+tests/cargo-agent/issues/Cargo.lock
+tests/cargo-agent/issues/Cargo.toml
+tests/cargo-agent/issues/scenario.env
+tests/cargo-agent/issues/src/lib.rs
+tests/cargo-agent/issues/target/.rustc_info.json
+tests/cargo-agent/test-fail/Cargo.lock
+tests/cargo-agent/test-fail/Cargo.toml
+tests/cargo-agent/test-fail/scenario.env
+tests/cargo-agent/test-fail/src/lib.rs
+tests/cargo-agent/test-fail/target/.rustc_info.json
  succeeded in 52ms:
-{"timestamp":"2026-03-08T16:52:32.668458+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/exploration.md"}}
-{"timestamp":"2026-03-08T16:52:33.158791+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt"}}
-{"timestamp":"2026-03-08T16:52:38.252923+00:00","agent":"claude","type":"Other","target":"-","status":"started","tool":"Agent","parameters":{"description":"Read existing agent scripts","prompt":"Read the following files and return their FULL contents:\n1. skills/npm-agent/scripts/npm-agent.sh\n2. skills/cargo-agent/scripts/cargo-agent.sh  \n3. skills/terra-agent/scripts/terra-agent.sh\n4. install.sh\n\nReturn the complete file contents for each.","subagent_type":"Explore"}}
-{"timestamp":"2026-03-08T16:52:39.744187+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:39.915235+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:40.116494+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:40.248144+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
-{"timestamp":"2026-03-08T16:52:54.989413+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh"}}
-{"timestamp":"2026-03-08T16:52:55.559101+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/install.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/install.sh"}}
-{"timestamp":"2026-03-08T16:52:55.727818+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh"}}
-{"timestamp":"2026-03-08T16:53:02.916477+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh","limit":70}}
-{"timestamp":"2026-03-08T16:53:03.371949+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/tests/","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/tests/","description":"List test directory"}}
-{"timestamp":"2026-03-08T16:53:04.410683+00:00","agent":"claude","type":"BashExec","target":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","status":"started","tool":"Bash","parameters":{"command":"ls /Users/chrisraethke/projects/x-agent/lib/ 2>/dev/null || echo \"lib/ does not exist yet\"","description":"Check if lib dir exists"}}
-{"timestamp":"2026-03-08T16:53:10.310457+00:00","agent":"claude","type":"FileRead","target":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh","status":"started","tool":"Read","parameters":{"file_path":"/Users/chrisraethke/projects/x-agent/tests/run-scenarios.sh"}}
-{"timestamp":"2026-03-08T16:53:41.392208+00:00","agent":"claude","type":"BashExec","target":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","status":"started","tool":"Bash","parameters":{"command":"mkdir -p /Users/chrisraethke/projects/x-agent/lib","description":"Create lib directory"}}
-{"timestamp":"2026-03-08T16:54:17.418890+00:00","agent":"claude","type":"FileWrite","target":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh","status":"started","tool":"Write","parameters":{"content":"#!/usr/bin/env bash\n# x-agent-common.sh — shared boilerplate for x-agent workflow runners.\n# Source this file from agent scripts; it produces no output or side effects.\n# Bash 3.2 compatible.\n\n# ---------------------------------------------------------------------------\n# Environment defaults (agent can override after sourcing)\n# ---------------------------------------------------------------------------\n\nKEEP_DIR=\"${KEEP_DIR:-0}\"\nFAIL_FAST=\"${FAIL_FAST:-0}\"\nCHANGED_FILES=\"${CHANGED_FILES:-}\"\nTMPDIR_ROOT=\"${TMPDIR_ROOT:-/tmp}\"\n\n# CI-aware MAX_LINES: unlimited in CI, concise locally.\nif [[ \"${CI:-}\" == \"true\" || \"${CI:-}\" == \"1\" ]]; then\n  MAX_LINES=\"${MAX_LINES:-999999}\"\nelse\n  MAX_LINES=\"${MAX_LINES:-40}\"\nfi\n\n# ---------------------------------------------------------------------------\n# Output helpers\n# ---------------------------------------------------------------------------\n\nhr() { echo \"------------------------------------------------------------\"; }\n\nSTEP_START_SECONDS=0\n\nstep() {\n  local name=\"$1\"\n  STEP_START_SECONDS=$SECONDS\n  hr\n  echo \"Step: $name\"\n}\n\nfmt_elapsed() {\n  local elapsed=$(( SECONDS - STEP_START_SECONDS ))\n  echo \"Time: ${elapsed}s\"\n}\n\n# ---------------------------------------------------------------------------\n# Flow control\n# ---------------------------------------------------------------------------\n\n# Returns 0 (continue) unless fail-fast is on and a step already failed.\n# Caller must declare `overall_ok` before use.\nshould_continue() { [[ \"$FAIL_FAST\" != \"1\" || \"$overall_ok\" == \"1\" ]]; }\n\n# ---------------------------------------------------------------------------\n# Dependency checking\n# ---------------------------------------------------------------------------\n\nneed() {\n  command -v \"$1\" >/dev/null 2>&1 || { echo \"Missing required tool: $1\" >&2; exit 2; }\n}\n\n# ---------------------------------------------------------------------------\n# Setup helpers (called explicitly by agents, not auto-executed)\n# ---------------------------------------------------------------------------\n\n# Create a temp output directory and install a cleanup trap.\n# Usage: setup_outdir <agent-name>\n# Sets: OUTDIR\nsetup_outdir() {\n  local agent_name=\"$1\"\n  OUTDIR=\"$(mktemp -d \"${TMPDIR_ROOT%/}/${agent_name}.XXXXXX\")\"\n\n  # Define the cleanup function inside setup_outdir so it captures OUTDIR.\n  _xagent_cleanup() {\n    local code=\"$?\"\n    if [[ \"${KEEP_DIR:-0}\" == \"1\" || \"$code\" != \"0\" ]]; then\n      echo \"Logs kept in: $OUTDIR\"\n    else\n      rm -rf \"$OUTDIR\"\n    fi\n    exit \"$code\"\n  }\n\n  trap _xagent_cleanup EXIT\n}\n\n# Acquire a workflow lock to prevent concurrent agent runs.\n# Usage: setup_lock <agent-name>\nsetup_lock() {\n  local agent_name=\"$1\"\n  local lockfile=\"${TMPDIR_ROOT%/}/${agent_name}.lock\"\n\n  # Open fd 9 for locking.\n  exec 9>\"$lockfile\"\n\n  if command -v flock >/dev/null 2>&1; then\n    if ! flock -n 9; then\n      echo \"${agent_name}: waiting for another run to finish...\"\n      flock 9\n    fi\n  elif command -v perl >/dev/null 2>&1; then\n    # macOS: flock not available, use perl as a portable fallback.\n    perl -e '\n      use Fcntl \":flock\";\n      open(my $fh, \">&=\", 9) or die \"fdopen: $!\";\n      if (!flock($fh, LOCK_EX | LOCK_NB)) {\n        print STDERR \"'\"${agent_name}\"': waiting for another run to finish...\\n\";\n        flock($fh, LOCK_EX) or die \"flock: $!\";\n      }\n    '\n  else\n    echo \"Warning: neither flock nor perl available; skipping workflow lock\" >&2\n  fi\n}\n\n# ---------------------------------------------------------------------------\n# Result formatting\n# ---------------------------------------------------------------------------\n\n# Print a step result with optional fix hint.\n# Usage: print_result <ok> <log_path> [fix_hint]\n#   ok: \"1\" for pass, \"0\" for fail\n#   log_path: path to the full log file\n#   fix_hint: text shown only on failure (optional but expected on FAIL)\nprint_result() {\n  local ok=\"$1\"\n  local log_path=\"$2\"\n  local fix_hint=\"${3:-}\"\n\n  echo\n  if [[ \"$ok\" == \"1\" ]]; then\n    echo \"Result: PASS\"\n  else\n    echo \"Result: FAIL\"\n    if [[ -n \"$fix_hint\" ]]; then\n      echo \"Fix: $fix_hint\"\n    fi\n  fi\n  echo \"Full log: $log_path\"\n  fmt_elapsed\n}\n\n# Print the final overall summary.\n# Usage: print_overall <overall_ok>\n#   overall_ok: \"1\" for pass, \"0\" for fail\n# The caller should exit with the appropriate code after calling this.\nprint_overall() {\n  local overall_ok=\"$1\"\n  hr\n  if [[ \"$overall_ok\" == \"1\" ]]; then\n    echo \"Overall: PASS\"\n  else\n    echo \"Overall: FAIL\"\n  fi\n  echo \"Logs: $OUTDIR\"\n}\n","file_path":"/Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh"}}
-{"timestamp":"2026-03-08T16:54:21.091877+00:00","agent":"claude","type":"BashExec","target":"shellcheck --severity=warning lib/x-agent-common.sh","status":"started","tool":"Bash","parameters":{"command":"shellcheck --severity=warning lib/x-agent-common.sh","description":"Shellcheck the shared library"}}
-{"timestamp":"2026-03-08T16:54:22.422852+00:00","agent":"claude","type":"BashExec","target":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","status":"started","tool":"Bash","parameters":{"command":"output=\"$(bash -c 'source lib/x-agent-common.sh' 2>&1)\" && if [[ -z \"$output\" ]]; then echo \"PASS: no output on source\"; else echo \"FAIL: output detected: $output\"; fi","description":"Test sourcing produces no output"}}
-{"timestamp":"2026-03-08T16:54:32.873660+00:00","agent":"claude","type":"BashExec","target":"bash -c '\nset -euo pipefail\nsource lib/x-agent-common.sh\n\n# Verify all functions exist\nfor fn in hr step fmt_elapsed should_continue need setup_outdir setup_lock print_result print_overall; do\n  if declare -f \"$fn\" >/dev/null 2>&1 || type \"$fn\" >/dev/null 2>&1; then\n    echo \"OK: $fn is available\"\n  else\n    echo \"FAIL: $fn missing\"\n  fi\ndone\n\n# Test need() with missing tool\nif (need nonexistent_tool_xyz 2>/dev/null); then\n  echo \"FAIL: need should have failed\"\nelse\n  code=$?\n  if [[ \"$code\" == \"2\" ]]; then\n    echo \"OK: need exits 2 for missing tool\"\n  else\n    echo \"FAIL: need exited $code instead of 2\"\n  fi\nfi\n\n# Test need() with existing tool\nneed bash\necho \"OK: need passes for existing tool\"\n\n# Test CI MAX_LINES default\nunset MAX_LINES\nCI=true source lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"999999\" ]]; then\n  echo \"OK: CI MAX_LINES=999999\"\nelse\n  echo \"FAIL: CI MAX_LINES=$MAX_LINES\"\nfi\n\n# Test local MAX_LINES default\nunset MAX_LINES CI\nsource lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"40\" ]]; then\n  echo \"OK: local MAX_LINES=40\"\nelse\n  echo \"FAIL: local MAX_LINES=$MAX_LINES\"\nfi\n\n# Test MAX_LINES explicit override\nMAX_LINES=100\nsource lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"100\" ]]; then\n  echo \"OK: MAX_LINES override preserved\"\nelse\n  echo \"FAIL: MAX_LINES=$MAX_LINES (expected 100)\"\nfi\n'","status":"started","tool":"Bash","parameters":{"command":"bash -c '\nset -euo pipefail\nsource lib/x-agent-common.sh\n\n# Verify all functions exist\nfor fn in hr step fmt_elapsed should_continue need setup_outdir setup_lock print_result print_overall; do\n  if declare -f \"$fn\" >/dev/null 2>&1 || type \"$fn\" >/dev/null 2>&1; then\n    echo \"OK: $fn is available\"\n  else\n    echo \"FAIL: $fn missing\"\n  fi\ndone\n\n# Test need() with missing tool\nif (need nonexistent_tool_xyz 2>/dev/null); then\n  echo \"FAIL: need should have failed\"\nelse\n  code=$?\n  if [[ \"$code\" == \"2\" ]]; then\n    echo \"OK: need exits 2 for missing tool\"\n  else\n    echo \"FAIL: need exited $code instead of 2\"\n  fi\nfi\n\n# Test need() with existing tool\nneed bash\necho \"OK: need passes for existing tool\"\n\n# Test CI MAX_LINES default\nunset MAX_LINES\nCI=true source lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"999999\" ]]; then\n  echo \"OK: CI MAX_LINES=999999\"\nelse\n  echo \"FAIL: CI MAX_LINES=$MAX_LINES\"\nfi\n\n# Test local MAX_LINES default\nunset MAX_LINES CI\nsource lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"40\" ]]; then\n  echo \"OK: local MAX_LINES=40\"\nelse\n  echo \"FAIL: local MAX_LINES=$MAX_LINES\"\nfi\n\n# Test MAX_LINES explicit override\nMAX_LINES=100\nsource lib/x-agent-common.sh\nif [[ \"$MAX_LINES\" == \"100\" ]]; then\n  echo \"OK: MAX_LINES override preserved\"\nelse\n  echo \"FAIL: MAX_LINES=$MAX_LINES (expected 100)\"\nfi\n'","description":"Test function availability and behavior"}}
-{"timestamp":"2026-03-08T16:54:41.356928+00:00","agent":"claude","type":"BashExec","target":"# Test setup_outdir: dir removed on success\ndir=\"$(bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n' 2>&1 | head -1)\"\nif [[ ! -d \"$dir\" ]]; then\n  echo \"OK: dir removed on success\"\nelse\n  echo \"FAIL: dir still exists: $dir\"\nfi\n\n# Test setup_outdir: dir preserved on failure\noutput=\"$(bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n  exit 1\n' 2>&1 || true)\"\ndir=\"$(echo \"$output\" | head -1)\"\nif [[ -d \"$dir\" ]]; then\n  echo \"OK: dir preserved on failure\"\n  rm -rf \"$dir\"\nelse\n  echo \"FAIL: dir was removed on failure\"\nfi\n\n# Test setup_outdir with KEEP_DIR=1 on success\noutput=\"$(KEEP_DIR=1 bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n' 2>&1)\"\ndir=\"$(echo \"$output\" | head -1)\"\nif [[ -d \"$dir\" ]]; then\n  echo \"OK: KEEP_DIR=1 preserves dir on success\"\n  rm -rf \"$dir\"\nelse\n  echo \"FAIL: KEEP_DIR=1 dir was removed\"\nfi","status":"started","tool":"Bash","parameters":{"command":"# Test setup_outdir: dir removed on success\ndir=\"$(bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n' 2>&1 | head -1)\"\nif [[ ! -d \"$dir\" ]]; then\n  echo \"OK: dir removed on success\"\nelse\n  echo \"FAIL: dir still exists: $dir\"\nfi\n\n# Test setup_outdir: dir preserved on failure\noutput=\"$(bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n  exit 1\n' 2>&1 || true)\"\ndir=\"$(echo \"$output\" | head -1)\"\nif [[ -d \"$dir\" ]]; then\n  echo \"OK: dir preserved on failure\"\n  rm -rf \"$dir\"\nelse\n  echo \"FAIL: dir was removed on failure\"\nfi\n\n# Test setup_outdir with KEEP_DIR=1 on success\noutput=\"$(KEEP_DIR=1 bash -c '\n  source lib/x-agent-common.sh\n  setup_outdir test-agent\n  echo \"$OUTDIR\"\n' 2>&1)\"\ndir=\"$(echo \"$output\" | head -1)\"\nif [[ -d \"$dir\" ]]; then\n  echo \"OK: KEEP_DIR=1 preserves dir on success\"\n  rm -rf \"$dir\"\nelse\n  echo \"FAIL: KEEP_DIR=1 dir was removed\"\nfi","description":"Test setup_outdir cleanup behavior"}}
+tests/npm-agent/clean/dist/index.js
+tests/npm-agent/clean/package.json
+tests/npm-agent/clean/scenario.env
+tests/npm-agent/clean/scripts/build.js
+tests/npm-agent/clean/scripts/format-check.js
+tests/npm-agent/clean/scripts/lint-check.js
+tests/npm-agent/clean/scripts/typecheck-check.js
+tests/npm-agent/clean/src/index.js
+tests/npm-agent/clean/test/basic.test.js
+tests/npm-agent/issues/package.json
+tests/npm-agent/issues/scenario.env
+ succeeded in 52ms:
+tests/terra-agent/.DS_Store
+tests/terra-agent/clean/main.tf
+tests/terra-agent/clean/scenario.env
+tests/terra-agent/issues/main.tf
+tests/terra-agent/issues/scenario.env
+tests/terra-agent/plan-safe/main.tf
+tests/terra-agent/plan-safe/scenario.env
+ succeeded in 50ms:
+tests/py-agent/clean/pyproject.toml
+tests/py-agent/clean/scenario.env
+tests/py-agent/clean/src/__init__.py
+tests/py-agent/clean/src/app.py
+tests/py-agent/clean/tests/__init__.py
+tests/py-agent/clean/tests/test_app.py
+tests/py-agent/issues/pyproject.toml
+tests/py-agent/issues/scenario.env
+tests/py-agent/issues/src/__init__.py
+tests/py-agent/issues/src/app.py
+tests/py-agent/issues/tests/__init__.py
+tests/py-agent/issues/tests/test_app.py
 exec
-/bin/zsh -lc 'ls -la /Users/chrisraethke/projects/x-agent/.ralph' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-total 1448
-drwxr-xr-x@ 17 chrisraethke  staff     544 Mar  9 02:59 .
+/bin/zsh -lc "sed -n '1,200p' tests/cargo-agent/issues/src/lib.rs" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,200p' tests/py-agent/issues/src/app.py" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,200p' tests/terra-agent/issues/main.tf" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' tests/npm-agent/issues/package.json" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+import os
+import sys
+import json
+
+def greet(name):
+    return f"Hello, {name}!"
+ succeeded in 53ms:
+pub fn parse_number() -> i32 {
+    "not-a-number"
+}
+ succeeded in 53ms:
+{
+  "name": "npm-agent-issues-scenario",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "format": "node -e \"process.exit(0)\"",
+    "lint": "node -e \"console.error('lint failed'); process.exit(1)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "test": "node -e \"process.exit(0)\"",
+    "build": "node -e \"process.exit(0)\""
+  }
+}
+
+ succeeded in 53ms:
+terraform{
+required_version=">= 1.5.0"
+}
+
+locals{
+  greeting="hello"
+}
+
+output "greeting"{
+value=local.greeting
+}
+
+exec
+/bin/zsh -lc "sed -n '280,560p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '320,680p' skills/terra-agent/scripts/terra-agent.sh" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '280,560p' skills/cargo-agent/scripts/cargo-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+    head -n "$MAX_LINES" "$log"
+  fi
+
+  echo
+  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the lint issues above, then re-run: /terra-agent lint"
+  echo "Full log: $log"
+  fmt_elapsed
+  [[ "$ok" == "1" ]]
+}
+
+usage() {
+  cat <<'EOF'
+terra-agent: lean Terraform workflow output for coding agents
+
+Usage:
+  terra-agent [--fail-fast]                   # runs fmt(check), init(safe), validate, lint
+  terra-agent [--fail-fast] fmt               # fmt in FMT_MODE
+  terra-agent fmt-check                       # report-only format check
+  terra-agent fmt-fix                         # auto-fix formatting
+ succeeded in 53ms:
+
+  if [[ -s "$diags" ]]; then
+    echo
+    echo "Diagnostics (first ${MAX_LINES} lines):"
+    head -n "$MAX_LINES" "$diags"
+  fi
+
+  echo
+  echo "Result: $([[ "$ok" == "1" ]] && echo PASS || echo FAIL)"
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the errors above, then re-run: /cargo-agent check"
+  echo "Full JSON: $json"
+  echo "Lean diags: $diags"
+  fmt_elapsed
+  [[ "$ok" == "1" ]]
+}
+
+run_clippy() {
+  step "clippy"
+  local json="$OUTDIR/clippy.json"
+  local diags="$OUTDIR/clippy.diags.txt"
+ succeeded in 53ms:
+  [[ "$ok" == "0" ]] && echo "Fix: resolve the errors above, then re-run: /terra-agent plan-safe"
+  echo "Init log: $init_log"
+  echo "Full log: $log"
+  fmt_elapsed
+  [[ "$ok" == "1" ]]
+}
+
+run_lint() {
+  step "lint"
+  local log="$OUTDIR/lint.log"
+  local ok=1
+  local -a args=()
+
+  if ! command -v tflint >/dev/null 2>&1; then
+    echo "Result: SKIP (tflint not found)"
+    fmt_elapsed
+    return 0
+  fi
+
+  if [[ "$TFLINT_RECURSIVE" == "1" ]]; then
+exec
+/bin/zsh -lc "sed -n '1,320p' docs/agents/definition-of-done.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Definition of Done for a New x-agent
+
+An agent is done only when all items below are complete.
+
+## Skill and Script
+
+- `skills/<name>-agent/SKILL.md` exists with accurate trigger language.
+- `skills/<name>-agent/SKILL.md` `allowed-tools` includes patterns for all env knobs (`RUN_*`, `MAX_LINES`, `KEEP_DIR`, `FAIL_FAST`, plus any agent-specific knobs).
+- `skills/<name>-agent/scripts/<name>-agent.sh` exists and is executable.
+- Script starts with `set -euo pipefail`.
+- Script has `--help`/`help`/`-h` usage output that works without project context (resolved before project-existence checks).
+
+## Output Contract
+
+- Each step emits `Step:`, `Result: PASS|FAIL|SKIP`, and `Time: Xs`.
+- Each `Result: FAIL` is followed by a `Fix:` line — suggests an auto-fix command first (if one exists), then tells how to retest via the agent.
+- On failure, prints truncated diagnostics (first `MAX_LINES` lines) and saves full logs to disk with path printed.
+- Final output is `Overall: PASS|FAIL` and `Logs: <path>`.
+
+## Behavior
+codex
+I’ve gathered the primary contracts; I’ll make a final pass for any repository-specific orchestration files (`.ralph/`, CI spec docs) so the plan is executable and aligned with your RALPH workflow.
+exec
+/bin/zsh -lc 'ls -la .ralph; find .ralph -maxdepth 2 -type f -print' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+total 1904
+drwxr-xr-x@ 18 chrisraethke  staff     576 Mar  9 03:09 .
 drwxr-xr-x@ 18 chrisraethke  staff     576 Mar  9 02:59 ..
 -rw-r--r--@  1 chrisraethke  staff    5209 Mar  8 23:09 README.md
+-rw-r--r--@  1 chrisraethke  staff    1488 Mar  9 03:08 automation-opportunities.md
 -rw-r--r--@  1 chrisraethke  staff     300 Mar  8 23:11 commit.md
--rw-r--r--@  1 chrisraethke  staff    4677 Mar  9 02:56 exploration.md
-drwxr-xr-x@  7 chrisraethke  staff     224 Mar  9 02:58 history
--rw-r--r--@  1 chrisraethke  staff   51263 Mar  9 02:59 plan-agent.log
--rw-r--r--@  1 chrisraethke  staff   35977 Mar  9 02:57 ralph-actions.jsonl
--rw-r--r--@  1 chrisraethke  staff    1409 Mar  9 02:59 ralph-state.json
--rw-r--r--@  1 chrisraethke  staff     165 Mar  9 02:58 ralph.lock
--rw-r--r--@  1 chrisraethke  staff    8033 Mar  9 02:59 ralph.log
--rw-r--r--@  1 chrisraethke  staff   60896 Mar  9 02:58 review-agent.log
--rw-r--r--@  1 chrisraethke  staff     933 Mar  9 02:58 review-result.txt
+-rw-r--r--@  1 chrisraethke  staff    4773 Mar  9 03:06 exploration.md
+drwxr-xr-x@ 12 chrisraethke  staff     384 Mar  9 03:08 history
+-rw-r--r--@  1 chrisraethke  staff   45046 Mar  9 03:09 plan-agent.log
+-rw-r--r--@  1 chrisraethke  staff   73582 Mar  9 03:06 ralph-actions.jsonl
+-rw-r--r--@  1 chrisraethke  staff    2093 Mar  9 03:09 ralph-state.json
+-rw-r--r--@  1 chrisraethke  staff     165 Mar  9 03:08 ralph.lock
+-rw-r--r--@  1 chrisraethke  staff   16781 Mar  9 03:09 ralph.log
+-rw-r--r--@  1 chrisraethke  staff   97512 Mar  9 03:08 review-agent.log
+-rw-r--r--@  1 chrisraethke  staff     453 Mar  9 03:08 review-result.txt
 drwxr-xr-x@ 12 chrisraethke  staff     384 Mar  8 23:08 specs
 -rw-r--r--@  1 chrisraethke  staff    1650 Mar  8 23:08 task.md
--rw-r--r--@  1 chrisraethke  staff  515248 Mar  9 02:57 work-agent.log
--rw-r--r--@  1 chrisraethke  staff    3661 Mar  9 02:57 work-summary.txt
+-rw-r--r--@  1 chrisraethke  staff  592713 Mar  9 03:07 work-agent.log
+-rw-r--r--@  1 chrisraethke  staff    3827 Mar  9 03:06 work-summary.txt
+.ralph/review-result.txt
 exec
-/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.ralph/task.md" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+/bin/zsh -lc "sed -n '1,260p' .ralph/specs/03-bash-agent.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/history/iteration-4-work-plan.txt" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/README.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' .ralph/specs/02-refactor-existing-agents.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Spec 02: Refactor Existing Agents to Use Shared Library
+
+## Objective
+
+Refactor cargo-agent, npm-agent, and terra-agent to source `lib/x-agent-common.sh` instead of duplicating boilerplate. Output must be identical before and after.
+
+## Source
+
+- **PRD User Story:** US-001 (completion — refactor portion)
+- **Functional Requirements:** FR-1
+
+## User Story Context
+
+> As a contributor, I want common boilerplate extracted into a shared library so that new agents are smaller and consistent.
+
+This spec completes US-001 by refactoring the three existing agents to use the shared lib created in spec 01.
+
+## Functional Requirements
+
+- FR-1: All agents source `lib/x-agent-common.sh` for shared boilerplate
+ succeeded in 53ms:
+# Spec 03: bash-agent
+
+## Objective
+
+Create a new bash-agent that validates shell scripts with `bash -n` (syntax checking) and `shellcheck` (linting).
+
+## Source
+
+- **PRD User Story:** US-002
+- **Functional Requirements:** FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
+
+## User Story Context
+
+> As a developer, I want a bash-agent that validates shell scripts for syntax errors and lint issues so I can catch problems before CI.
+
+## Functional Requirements
+
+- FR-1: Sources `lib/x-agent-common.sh`
+- FR-2: Supports universal knobs (KEEP_DIR, MAX_LINES, FAIL_FAST, TMPDIR_ROOT, CHANGED_FILES)
+- FR-3: Per-step toggles (RUN_SYNTAX, RUN_LINT)
+ succeeded in 53ms:
+# RALPH Loop - Project Guide
+
+**Welcome to your RALPH (Recursive Autonomous Loop with Planning & Human-oversight) development environment!**
+
+This project uses an autonomous AI development loop that breaks down requirements into discrete specifications and implements them iteratively with automated planning, implementation, and review cycles.
+
+## Overview
+
+RALPH loop is a three-phase iterative development cycle:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  PLAN Phase (Codex)                                 │
+│  • Analyze spec                                     │
+│  • Create detailed work plan                        │
+│  • Identify risks and dependencies                  │
+└─────────────────┬───────────────────────────────────┘
+                  ▼
+┌─────────────────────────────────────────────────────┐
+│  WORK Phase (Claude Code)                           │
+ succeeded in 53ms:
+## Implementation Checklist
+- [ ] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
+- [ ] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
+- [ ] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
+- [ ] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
+- [ ] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
+- [ ] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
+- [ ] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
+- [ ] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
+- [ ] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
+- [ ] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
+- [ ] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
+- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
+- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+
+## Architecture Review
+
+### System Boundaries
+
+The runtime is split into three layers.
+exec
+/bin/zsh -lc "[ -f .ralph/work-plan.txt ] && sed -n '1,260p' .ralph/work-plan.txt || true" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+codex
+I found prior plan artifacts; to avoid duplication, I’m now checking existing SKILL metadata patterns (especially `allowed-tools`) so this plan can require the new `bash-agent` SKILL fields exactly in the right shape.
+exec
+/bin/zsh -lc "sed -n '1,260p' skills/terra-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,220p' skills/npm-agent/SKILL.md" in /Users/chrisraethke/projects/x-agentexec
+/bin/zsh -lc "sed -n '1,260p' skills/cargo-agent/SKILL.md" in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
+---
+name: npm-agent
+description: |
+  Run npm-agent.sh — a lean Node.js workflow runner that produces agent-friendly output.
+  Use when: running JS/TS checks (format, lint, typecheck, test, build), verifying Node code before committing,
+  or when the user asks to run npm/yarn/pnpm/bun checks, lint, format, or test a Node.js project.
+  Triggers on: npm agent, run npm checks, node checks, lint and test, verify node code, run js checks.
+context: fork
+allowed-tools:
+  - Bash(scripts/npm-agent.sh*)
+  - Bash(RUN_*=* scripts/npm-agent.sh*)
+  - Bash(MAX_LINES=* scripts/npm-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/npm-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/npm-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/npm-agent.sh*)
+---
+
+# NPM Agent
+
+Run the `npm-agent.sh` script for lean, structured Node.js workflow output designed for coding agents.
+ succeeded in 52ms:
+---
+name: cargo-agent
+description: |
+  Run cargo-agent.sh — a lean Rust workflow runner that produces agent-friendly output with structured diagnostics.
+  Use when: running Rust checks (fmt, clippy, check, test), verifying Rust code before committing,
+  or when the user asks to run cargo checks, lint, format, or test a Rust project.
+  Triggers on: cargo agent, run cargo checks, rust checks, cargo fmt clippy test, verify rust code.
+context: fork
+allowed-tools:
+  - Bash(scripts/cargo-agent.sh*)
+  - Bash(RUN_*=* scripts/cargo-agent.sh*)
+  - Bash(MAX_LINES=* scripts/cargo-agent.sh*)
+  - Bash(USE_NEXTEST=* scripts/cargo-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/cargo-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/cargo-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/cargo-agent.sh*)
+  - Bash(RUN_INTEGRATION=* scripts/cargo-agent.sh*)
+---
+
+# Cargo Agent
+ succeeded in 52ms:
+---
+name: terra-agent
+description: |
+  Run terra-agent.sh — a lean Terraform workflow runner that reports formatting/validation status
+  and can also auto-fix Terraform formatting.
+  Use when: running Terraform fmt checks, auto-fixing fmt, safe init, safe plan, validate, or optional tflint checks.
+  Triggers on: terra agent, terraform fmt check, terraform fmt fix, terraform init, terraform plan, terraform validate, run terraform checks.
+context: fork
+allowed-tools:
+  - Bash(scripts/terra-agent.sh*)
+  - Bash(RUN_*=* scripts/terra-agent.sh*)
+  - Bash(MAX_LINES=* scripts/terra-agent.sh*)
+  - Bash(KEEP_DIR=* scripts/terra-agent.sh*)
+  - Bash(FAIL_FAST=* scripts/terra-agent.sh*)
+  - Bash(FMT_MODE=* scripts/terra-agent.sh*)
+  - Bash(TERRAFORM_CHDIR=* scripts/terra-agent.sh*)
+  - Bash(TF_CHDIR=* scripts/terra-agent.sh*)
+  - Bash(CHANGED_FILES=* scripts/terra-agent.sh*)
+---
+
+codex
+I’ve captured the existing SKILL metadata format and will now inspect one more existing agent for file-discovery patterns so the bash plan aligns with repository conventions and avoids hidden corner cases.
+exec
+/bin/zsh -lc "sed -n '1,320p' skills/py-agent/scripts/py-agent.sh" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+#!/usr/bin/env bash
+set -euo pipefail
+
+# py-agent: lean Python workflow output for coding agents
+# deps: bash, mktemp
+# optional: ruff, black, mypy, pyright, pytest
+
+KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
+# In CI, show full output; locally, limit to 40 lines to keep things tidy.
+if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+  MAX_LINES="${MAX_LINES:-999999}"
+else
+  MAX_LINES="${MAX_LINES:-40}"
+fi
+RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
+RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
+RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
+RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
+FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
+CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes format/lint to affected .py files
+exec
+/bin/zsh -lc "rg -n \"find .* -name '\\*\\.sh'|vendor|node_modules|\\.git|find .* -prune|CHANGED_FILES\" skills README.md tests docs | sed -n '1,260p'" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+README.md:28:curl -sSf https://raw.githubusercontent.com/codesoda/x-agent/main/install.sh | sh
+README.md:34:git clone git@github.com:codesoda/x-agent.git
+docs/testing.md:47:(`.github/workflows/ci.yml`).
+docs/testing.md:78:2. Add a new job block to `.github/workflows/ci.yml`.
+skills/npm-agent/SKILL.md:15:  - Bash(CHANGED_FILES=* scripts/npm-agent.sh*)
+skills/npm-agent/SKILL.md:55:| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes lint/format to those files |
+skills/npm-agent/SKILL.md:81:- `CHANGED_FILES` scopes biome/eslint/prettier fallback paths to only the listed files (package.json scripts always run project-wide)
+skills/cargo-agent/SKILL.md:16:  - Bash(CHANGED_FILES=* scripts/cargo-agent.sh*)
+skills/cargo-agent/SKILL.md:73:| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; scopes check/clippy/test to affected packages |
+skills/cargo-agent/SKILL.md:91:- `CHANGED_FILES` uses `cargo metadata` to resolve files to workspace packages, then scopes check/clippy/test to only those packages
+docs/contributing.md:76:6. `CHANGED_FILES` scoping (scope work to affected files/packages)
+skills/terra-agent/SKILL.md:18:  - Bash(CHANGED_FILES=* scripts/terra-agent.sh*)
+skills/terra-agent/SKILL.md:65:| `CHANGED_FILES` | _(empty)_ | Space-separated changed file paths; auto-sets `TERRAFORM_CHDIR` from `.tf` files |
+skills/terra-agent/SKILL.md:87:- `CHANGED_FILES` auto-detects `TERRAFORM_CHDIR` when all changed `.tf` files are in one directory
+skills/terra-agent/scripts/terra-agent.sh:32:# If CHANGED_FILES is set and TERRAFORM_CHDIR was not explicitly provided,
+skills/terra-agent/scripts/terra-agent.sh:35:  if [[ -z "$CHANGED_FILES" ]]; then return; fi
+skills/terra-agent/scripts/terra-agent.sh:41:  for f in $CHANGED_FILES; do
+skills/terra-agent/scripts/terra-agent.sh:363:  CHANGED_FILES="f1 f2"          # auto-set TERRAFORM_CHDIR from changed .tf files
+docs/agents/definition-of-done.md:31:- Supports `CHANGED_FILES` for scoping work to affected files/packages where meaningful (optional but recommended).
+skills/py-agent/SKILL.md:15:  - Bash(CHANGED_FILES=* scripts/py-agent.sh*)
+exec
+/bin/zsh -lc "sed -n '1,260p' .ralph/exploration.md" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+# x-agent Exploration Notes
+
+## Key Files & Roles
+
+- `lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
+- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
+- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
+- `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+- `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+- `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+- `docs/agents/add-x-agent.md`: canonical structure guide for script boilerplate, helpers, output contract, and agent metadata.
+- `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
+- `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
+- `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
+- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
+
+## Patterns & Conventions
+
+codex
+I now have enough signal to draft the plan and update exploration. Before I write, I’ll quickly check existing `.ralph/automation-opportunities.md` to avoid duplicating insight IDs and keep future automation entries consistent.
+exec
+/bin/zsh -lc "sed -n '1,260p' .ralph/automation-opportunities.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+# Automation Opportunities for x-agent
+
+## [2026-03-08T16:59:00Z] output-parity-diff
+
+**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
+
+**Priority**: HIGH
+
+**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in `Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
+
+**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
+
+**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
+
+**Status**: PENDING
+
+## [2026-03-08T17:08:28Z] review-work-plan-checklist
+
+**Frequency**: Caught repeatedly in multi-agent specs where work-plan.txt can be stale
+
+codex
+I’m ready to write, and I’ll make sure `.ralph/work-plan.txt` includes architecture, code-quality, test, and performance analyses plus the required implementation checklist format, then validate it with `ralph validate plan`.
+exec
+/bin/zsh -lc "sed -n '1,260p' .ralph/task.md; sed -n '1,260p' task.md" in /Users/chrisraethke/projects/x-agent exited 1 in 53ms:
 # Task: x-agent Backlog — Shared Library + 8 New Agents
 
 ## Overview
@@ -875,633 +1395,578 @@ Extract shared boilerplate from existing agents into a common library, then ship
 - `shellcheck --severity=warning` passes on all scripts including `lib/x-agent-common.sh`
 - Each new agent script is under ~200 lines of domain-specific code
 codex
-I confirmed the `.ralph` folder has task/spec metadata but no existing work-plan file, so I’ll generate a new `.ralph/work-plan.txt`. I’m grabbing the testing doc next to align step-level assertions with CI expectations.
+I’m writing `.ralph/work-plan.txt` now with the required checklist header, architecture/code quality/test/performance sections, decision log, and step-by-step implementation plan tailored to the bash-agent spec.
 exec
-/bin/zsh -lc "sed -n '1,280p' /Users/chrisraethke/projects/x-agent/docs/testing.md" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-# Testing
-
-All testing — local and CI — runs through `tests/run-scenarios.sh`.
-
-## Local Testing
-
-```bash
-# Everything (shellcheck + all scenario fixtures)
-tests/run-scenarios.sh
-
-# Filter to one agent
-tests/run-scenarios.sh cargo-agent
-
-# Just shellcheck
-tests/run-scenarios.sh shellcheck
-
-# List available scenarios
-tests/run-scenarios.sh --list
-```
-
-exec
-/bin/zsh -lc 'wc -l /Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh /Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh /Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh /Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-     658 /Users/chrisraethke/projects/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
-     390 /Users/chrisraethke/projects/x-agent/skills/npm-agent/scripts/npm-agent.sh
-     469 /Users/chrisraethke/projects/x-agent/skills/terra-agent/scripts/terra-agent.sh
-     152 /Users/chrisraethke/projects/x-agent/lib/x-agent-common.sh
-    1669 total
-codex
-I’ve completed core discovery. I’m adding one final pass over lock/scenario helper scripts so the implementation and risk plan explicitly covers concurrency behavior and skip paths.
-exec
-/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/tests/terra-agent/plan-safe/.terraform.lock.hcl" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/tests/cargo-agent/flock/flock-test.sh" in /Users/chrisraethke/projects/x-agentexec
-/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/tests/terra-agent/plan-safe/main.tf" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Test: cargo-agent workflow-level lock prevents concurrent runs.
-#
-# 1. Hold the lockfile in a background process.
-# 2. Launch cargo-agent (help, so it exits quickly after acquiring the lock).
-# 3. Verify cargo-agent prints the "waiting" message.
-# 4. Release the lock.
-# 5. Verify cargo-agent completes successfully.
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-SCRIPT="$ROOT_DIR/skills/cargo-agent/scripts/cargo-agent.sh"
-TMPDIR_TEST="$(mktemp -d "${TMPDIR:-/tmp}/flock-test.XXXXXX")"
-
-cleanup() {
-  # Kill any lingering background jobs.
-  kill "$HOLDER_PID" 2>/dev/null || true
-  wait "$HOLDER_PID" 2>/dev/null || true
-  rm -rf "$TMPDIR_TEST"
- succeeded in 51ms:
-terraform {
-  required_version = ">= 1.5.0"
-}
-
-locals {
-  name = "plan-safe"
-}
-
-output "name" {
-  value = local.name
-}
-
- exited 1 in 51ms:
-sed: /Users/chrisraethke/projects/x-agent/tests/terra-agent/plan-safe/.terraform.lock.hcl: No such file or directory
-codex
-I’ve collected lock behavior and fixture details. I’m now updating `.ralph/exploration.md` with the current findings and preparing the plan document with explicit architecture, quality, tests, and risk handling before writing final outputs.
-exec
-/bin/zsh -lc "sed -n '1,260p' /Users/chrisraethke/projects/x-agent/.github/workflows/ci.yml" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-name: CI – scenario tests
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
-permissions:
-  contents: read
-
-jobs:
-  # ── shellcheck ──────────────────────────────────────────────────────
-  shellcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: ShellCheck agent scripts
-        run: |
-          shopt -s globstar
-          shellcheck --severity=warning skills/*/scripts/*.sh tests/run-scenarios.sh tests/**/*.sh install.sh
-exec
-/bin/zsh -lc 'ls -la /Users/chrisraethke/projects/x-agent/.ralph/specs' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
-total 136
-drwxr-xr-x@ 12 chrisraethke  staff   384 Mar  8 23:08 .
-drwxr-xr-x@ 17 chrisraethke  staff   544 Mar  9 02:59 ..
--rw-r--r--@  1 chrisraethke  staff  4567 Mar  8 23:04 01-shared-library-extract.md
--rw-r--r--@  1 chrisraethke  staff  3344 Mar  8 23:05 02-refactor-existing-agents.md
--rw-r--r--@  1 chrisraethke  staff  5211 Mar  8 23:05 03-bash-agent.md
--rw-r--r--@  1 chrisraethke  staff  4260 Mar  8 23:06 04-go-agent.md
--rw-r--r--@  1 chrisraethke  staff  3319 Mar  8 23:06 05-gha-agent.md
--rw-r--r--@  1 chrisraethke  staff  3992 Mar  8 23:06 06-helm-agent.md
--rw-r--r--@  1 chrisraethke  staff  4396 Mar  8 23:07 07-kube-agent.md
--rw-r--r--@  1 chrisraethke  staff  4150 Mar  8 23:07 08-docker-agent.md
--rw-r--r--@  1 chrisraethke  staff  4601 Mar  8 23:07 09-ansible-agent.md
--rw-r--r--@  1 chrisraethke  staff  4244 Mar  8 23:08 10-sql-agent.md
-codex
-I’m updating `.ralph/exploration.md` now with a current map of the touched files, runner patterns, and the new shared-library coupling points, so the WORK agent can jump straight into edits.
-exec
-/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/exploration.md <<'EOF'
-# x-agent Exploration Notes
-
-## Key Files & Roles
-
-- "'`lib/x-agent-common.sh`: shared boilerplate for x-agent runners. Provides output helpers, tool validation, output directory/cleanup setup, workflow locking, and summary output helpers. Sourced by every runnable agent script.
-- `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner with the heaviest business logic; contains run_x step handlers plus shared boilerplate currently inline.
-- `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner with package-manager detection and file-scoping logic for lint/format.
-- `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner with safe init/plan behavior and optional tflint checks.
-- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
-- `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
-- `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
-- `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
-- `docs/agents/add-x-agent.md`: canonical structure guide for script boilerplate, helpers, output contract, and agent metadata.
-- `docs/agents/scenario-tests.md` and `docs/testing.md`: fixture contracts and local/CI test flow.
-- `docs/agents/definition-of-done.md`: acceptance checks for output contract, env knobs, and scenario fixtures.
-- `AGENTS.md`: root conventions for Bash 3.2 compatibility, structured output contract, and failure/skip semantics.
-- `.github/workflows/ci.yml`: CI entrypoint that runs `tests/run-scenarios.sh` per agent and optional tool-matrix variants.
-
-## Patterns & Conventions
-
-- Script header pattern: `#!/usr/bin/env bash` + `set -euo pipefail`.
-- Output format is strict and machine-compatible: each step prints `Step:`, `Result: PASS|FAIL|SKIP`, optional `Fix:`, and `Time:`; run end prints `Overall:` and `Logs:`.
-- Runtime knobs are env-overridable: `RUN_<STEP>`, `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `TMPDIR_ROOT`, `CHANGED_FILES`.
-- `FAIL_FAST` uses guarded dispatch: evaluate `should_continue()` before each run step when running `all`.
-- Temp logs flow through `$OUTDIR`; failures and keep-mode preserve temp directory with `Logs kept in: <path>` from trap; success normally removes temp dir.
-- Concurrent invocations are serialized by lockfiles (`${TMPDIR_ROOT}/<agent>.lock`) using `flock` with Perl fallback.
-- `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
-- Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
-- Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
-
-## Database Schema
-
-No database is used.
-
-## Test Infrastructure
-
-- `tests/run-scenarios.sh` discovers all `tests/*/scenario.env` fixtures, runs `shellcheck` first (or if filtered), and executes each scenario in fixture directories.
-- Fixture runner expects relative script path via `AGENT_SCRIPT`; missing script prints `SKIP`.
-- If a declared `REQUIRED_TOOLS` item is unavailable, the scenario is `SKIP`.
-- `EXPECT_EXIT` values are asserted; mismatch prints log + first 40 lines.
-- `tests/cargo-agent/flock` adds explicit lock contention coverage; scenario uses `help` mode to keep run short while validating wait message and eventual completion.
-- `tests/run-scenarios.sh --list` enumerates full fixture labels (`tests/<agent>/<case>`), useful to target validation slices.
-- CI runs the same command (`tests/run-scenarios.sh <filter>`) and adds optional matrix variants for `nextest` and `tflint`.
-
-## Architecture & Data Flow
-
-- Entry point: one Bash script per agent called from scenario directory context.
-- Initialization: set defaults (`KEEP_DIR`, `MAX_LINES`, etc.), validate required tools (`need`), allocate output directory, and obtain lock.
-- Execution: parse command args (`--fail-fast`, `help`, and step commands), then route to ordered step functions.
-- Each step runs external tool(s), writes full command output to `$OUTDIR/<step>.log`, and prints an abbreviated result with bounded context lines.
-- Exit path: steps return shell status to an `overall_ok` accumulator; final block prints `Overall` and returns 0/1.
-- Shared-library integration point: each agent script should source `lib/x-agent-common.sh` after `set -euo pipefail` and use `setup_outdir` + `setup_lock` helpers.
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-codex
-I now have all required inputs and constraints. I’ll write the full `work-plan.txt` with the required checklist-first format, architecture/quality/test/performance analyses, and step-by-step execution plan before validating it with `ralph validate plan`.
-codex
-I’ve finished the discovery and am now writing the full `.ralph/work-plan.txt` with the required checklist format, architecture + risk analyses, detailed implementation steps, decision log, edge-case matrix, and quality gates.
-exec
-/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt <<'EOF'
+/bin/zsh -lc "cat <<'EOF' > .ralph/work-plan.txt
 ## Implementation Checklist
-- [ ] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding "'`lib/x-agent-common.sh` export.
-- [ ] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
-- [ ] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
-- [ ] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
-- [ ] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
-- [ ] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
-- [ ] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
-- [ ] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
-- [ ] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
-- [ ] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
-- [ ] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
-- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
+- [ ] 1. Confirm shared-library patterns and existing helper contracts are reused ("'`lib/x-agent-common.sh`, `setup_outdir`, `setup_lock`, `print_overall`) and no per-agent exception handling is introduced in bash-agent.
+- [ ] 2. Create `skills/bash-agent/scripts/bash-agent.sh` with shared-lib sourcing, required knobs, and command dispatch structure that supports `syntax`, `lint`, `all`, `--fail-fast`, `help`, and unknown-command handling.
+- [ ] 3. Implement `.sh` discovery logic with explicit behavior for `CHANGED_FILES` and recursive scan fallback, including `.git`, `node_modules`, and `vendor` exclusion.
+- [ ] 4. Implement `run_syntax` step using `bash -n` across discovered files, aggregate full diagnostics to a per-step log, and print truncated output + `Fix:` hint on failure.
+- [ ] 5. Implement `run_lint` step using `shellcheck --severity=${SHELLCHECK_SEVERITY}` across discovered files, aggregate logs, and produce shellcheck wiki link(s) in `Fix:` on failure.
+- [ ] 6. Ensure command path supports `SHELLCHECK_SEVERITY` override and default severity semantics while keeping required `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST` behavior intact.
+- [ ] 7. Create `skills/bash-agent/SKILL.md` with trigger language and `allowed-tools` entries for RUN knobs, `SHELLCHECK_SEVERITY`, `CHANGED_FILES`, and shared controls.
+- [ ] 8. Add scenario fixtures under `tests/bash-agent/clean` and `tests/bash-agent/issues`, including `scenario.env` and fixture scripts.
+- [ ] 9. Validate fixture behavior: `clean` exits 0 with `shellcheck`+`bash` available, and `issues` exits 1 for intentional lint violation and/or shell syntax issue.
+- [ ] 10. Update `install.sh` to include `bash-agent` in `SKILLS`, add optional dependency check messaging for `shellcheck`, and add `bash-agent` line to `print_agents_md_snippet`.
+- [ ] 11. Update `README.md` with bash-agent row in Available Agents and usage examples showing `syntax`, `lint`, and `all`.
+- [ ] 12. Run `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent` locally in validation slice, then fix and rerun until green.
+- [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+- [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
 
 ## Architecture Review
 
-### System Boundaries
+### Overall design and boundaries
+The implementation is a single new command-line agent bounded to `skills/bash-agent/scripts/bash-agent.sh`, metadata in `skills/bash-agent/SKILL.md`, scenario fixtures in `tests/bash-agent`, installer wiring in `install.sh`, and user documentation in `README.md`. The data flow is deterministic and linear:
+- CLI/env parsing.
+- Output directory + lock setup.
+- File discovery.
+- Step execution (`syntax`, `lint`, or `all`).
+- Step logging + result formatting.
+- Final `Overall` summary and exit code.
 
-The runtime is split into three layers.
+### Dependency graph and coupling
+- Runtime dependencies for execution: `bash`, `shellcheck` (required), plus `find`, `grep`, `head`, `sort`, `uniq` from POSIX shell environment.
+- Shared coupling: all common behavior comes from `lib/x-agent-common.sh` through path-based source import, so updates there affect all agents.
+- Repo coupling: this spec touches five files and one optional metadata file, and is discovered automatically by `tests/run-scenarios.sh` by virtue of `tests/<agent>/scenario.env`.
+- Installer coupling: adding `bash-agent` to `SKILLS` and `check_optional_deps` controls install-time messaging only; runtime behavior is independent once installed.
 
-1) Shared runtime layer in `lib/x-agent-common.sh` holds boilerplate that is structurally identical across agents: output helpers, environment defaults, tool checks, output-dir lifecycle, lock lifecycle, and final summary formatting.
+### Data flow and bottlenecks
+- Input: user env + command + working directory.
+- Transform: discovery list -> per-step command execution -> log file output -> parsed status/fix hints.
+- Output: console summary + files under `$OUTDIR`.
+- Bottleneck: scanning filesystem for `.sh` files recursively when `CHANGED_FILES` is empty; mitigated with excludes and short-circuit on empty discovery.
 
-2) Domain runner layer in `skills/<agent>/scripts/<agent>-agent.sh` holds project-specific logic only: command dispatch, tool arguments, package/tool-specific step functions, and domain-specific error messaging.
+### Scaling characteristics and single points of failure
+- Scaling is mostly linear in number of script files and shellcheck complexity.
+- Single failure points are external tool execution (`bash`, `shellcheck`), lock contention, and directory traversal in large repos.
+- Lock contention is serialized intentionally and can create queued latency but prevents state corruption.
 
-3) Test/packaging layer in `tests/run-scenarios.sh` and `install.sh` exercises contract and distribution.
+### Security architecture
+- Command execution is limited to the local project files and fixed tool binaries.
+- Security risks are low relative to domain; primary risks are log path tampering and shell metacharacter issues in paths.
+- Mitigations:
+  - Quote expanded file names in tool invocations.
+  - Filter `CHANGED_FILES` to file paths and existence checks.
+  - Keep lock and temp-dir usage unchanged from shared library pattern.
 
-`tests/run-scenarios.sh` is a strict integration boundary because all behavior claims are verified by the fixture contract, not by unit tests.
+## Architecture options (with tradeoffs)
 
-### Dependency Graph and Coupling
+### Decision A: shared-lib-first implementation
+- Option 1: Keep all boilerplate local as in older agents.
+  - Effort: low.
+  - Risk: high long-term drift from shared style.
+  - Impact: inconsistent behavior and larger per-agent scripts.
+- Option 2: Use `x-agent-common.sh` helpers (`setup_outdir`, `setup_lock`, etc.) for all shared concerns and only implement domain logic.
+  - Effort: moderate implementation effort, low maintenance.
+  - Risk: stronger dependency on helper interface.
+  - Impact: matches existing architecture and all future agents.
+- Option 3: Wrap bash-agent in a wrapper script around a generic shellcheck checker utility.
+  - Effort: medium+ (new infra).
+  - Risk: abstraction overhead and extra indirection.
+  - Impact: future extensibility but unnecessary complexity.
+- Recommended: Option 2 for consistency and minimal future maintenance.
 
-- Hard dependency: each edited script depends on `lib/x-agent-common.sh` at runtime.
-- Direct coupling path: `SCRIPT_DIR -> ../../../lib -> lib/x-agent-common.sh` (fragile if scripts are relocated).
-- Shared optional dependencies: `flock`, `perl`, `bash`, and command-line tools per agent.
-- Packaging coupling: `install.sh` must ensure `lib/` is installed in both local and remote modes.
+### Decision B: lint code extraction and fix-hint strategy
+- Option 1: Static one-code hint only (first `SC####`).
+  - Effort: very low.
+  - Risk: under-informs when multiple shellcheck violations exist.
+  - Impact: faster implementation, weaker fix signal.
+- Option 2: Aggregate all unique `SC####` codes and append one wiki link per code.
+  - Effort: moderate.
+  - Risk: long `Fix:` line in noisy files.
+  - Impact: highest signal for developers.
+- Option 3: Print only tool output and no wiki links.
+  - Effort: low.
+  - Risk: violates FR-13 acceptance requirement.
+  - Impact: insufficient for this spec.
+- Recommended: Option 2, with link truncation to first 5 unique codes if necessary.
 
-The explicit coupling is acceptable for this phase but should be tracked because path-coupling is the highest single fragility point.
-
-### Data Flow Patterns and Bottlenecks
-
-1) Input/env processing: args and knobs are resolved first (`RUN_*`, `KEEP_DIR`, `FAIL_FAST`, `CHANGED_FILES`, `MAX_LINES`, `TMPDIR_ROOT`).
-2) Setup phase: create `OUTDIR`, install exit trap via `setup_outdir`, acquire lock via `setup_lock`.
-3) Execution phase: run ordered steps, each writing command output to `$OUTDIR/<step>.log` and printing truncated diagnostics + elapsed time.
-4) Aggregation: update `overall_ok`, optionally short-circuit with `should_continue`.
-5) Summary phase: call `print_overall "$overall_ok"`, then return exit code.
-
-Primary bottlenecks remain external tool execution (`cargo`, `node`, `terraform`), not shell orchestration.
-
-### Security Architecture
-
-- Input vectors are local shell arguments and environment variables.
-- Risk surface is command execution from user workspace; current pattern is command-injection-prone only if shell variables are interpolated unsafely. Existing scripts already pass this through unquoted args in places requiring shell parsing, so security posture is mostly inherited and must remain unchanged.
-- Lock files are local and only advisory. Existing fallback to perl ensures compatibility but does not provide cryptographic guarantees.
-- `install.sh` path rewriting and symlink/copy behavior should remain unchanged to avoid path injection from remote fetches; this phase only inherits those mechanics.
-
-### Architectural Decision Options
-
-1) Option A: Keep only hardcoded source path `../../../lib` and no abstraction.
-Why: aligns with FR-2 requirement text and current install layout. Lowest code churn.
-Cost/Risk: tight coupling to script location and difficult future portability.
-Impact: fastest path, minimal change footprint.
-
-2) Option B: Introduce `resolve_lib_dir()` in `lib/x-agent-common.sh`.
-Why: centralizes path logic and reduces relocation risk.
-Cost/Risk: deviates from explicit required snippet, may require additional behavior changes and tests now.
-Impact: better future flexibility, higher refactor risk for this phase.
-
-3) Option C: Add per-agent `LIB_DIR` override env fallback (e.g., `RA_LAUNCHER_LIB_DIR`).
-Why: allows tests or installs to override without path math in scripts.
-Cost/Risk: extra configuration surface and allowed-tools complexity.
-Impact: flexibility increase, but overkill for this narrow spec.
-
-Recommended: Option A for this phase because it matches explicit spec requirement and previous extraction assumptions, with a follow-up ticket for optional Option B once all agents are stable.
-
-### Implications for Future Specs
-
-- All future agent work should preserve helper boundary and call pattern for consistency.
-- Future specs can de-duplicate path coupling by upgrading the shared lib to Option B after this phase.
-- Any new agent should be validated against the same `run-scenarios` contract before introducing more helpers in the shared layer.
+### Decision C: behavior when `CHANGED_FILES` resolves to zero files
+- Option 1: Treat as PASS.
+  - Effort: minimal.
+  - Risk: may mask mis-scoped inputs.
+- Option 2: Treat as SKIP with explicit reason.
+  - Effort: low.
+  - Risk: requires test expectations for SKIP path.
+  - Impact: clear caller feedback and safer with CI automation.
+- Option 3: Treat as FAIL.
+  - Effort: low.
+  - Risk: disruptive when hook calls intentionally scope empty sets.
+  - Impact: highest risk for orchestration.
+- Recommended: Option 2 (`Result: SKIP (no matching .sh files)`) to make state explicit without failing workflows.
 
 ## Code Quality Planning
 
-### Module Organization
+- Keep script domain size small and readable by centralizing shared behavior in `x-agent-common.sh`.
+- Use small helper functions: `collect_sh_files`, `run_syntax`, `run_lint`, and `extract_shellcheck_codes`.
+- Follow existing naming style: `run_<step>()` and `usage()`.
+- Preserve structured output contract exactly: `Step`, `Result`, optional `Fix`, `Output`, `Full log`, `Time`, `Overall`, and `Logs` from trap.
+- Use one source-of-truth list (`sh_files`) to avoid duplicated file-selection logic across syntax and lint.
+- Keep helper interactions explicit; avoid nested and hidden defaults.
+- Avoid clever tricks; prefer straightforward loops and explicit status flags.
+- Add comment lines near `CHANGED_FILES` and `SHELLCHECK_SEVERITY` for maintainability and future agents.
 
-The goal is a clean separation between shared runtime helpers and domain step implementations.
-
-1. Keep `lib/x-agent-common.sh` as a pure helper module with no side effects on source.
-2. Keep agent scripts minimal and domain-centric: parser, run_* functions, and dispatch only.
-3. Keep all `CHANGE` behaviors (`CHANGED_FILES`) in domain scripts because semantics differ by tool.
-
-### DRY Opportunities
-
-Most duplication is exactly the boilerplate block, not business logic.
-
-- Remove repeated block variables and helper functions from all three scripts.
-- Reuse `setup_outdir` and `setup_lock` exactly once in each script.
-- Keep helper calls like `print_overall` only where identical to avoid introducing non-equivalent wrappers.
-
-### Error Handling Patterns to Preserve
-
-- `need` must continue to exit 2 for missing required tooling.
-- `cleanup` semantics must remain: preserve `$OUTDIR` on failure or `KEEP_DIR=1`, remove on success otherwise.
-- Help path (`help`, `--help`, `-h`) must still run without project preconditions.
-- Lock wait message must still print when lock contention exists.
-- `overall_ok` must preserve step-level fail state.
-
-### Explicit Edge Cases to Handle
-
-- If script receives unknown command: exit 2 and usage message.
-- If required tool missing: immediate 2 with same message shape.
-- If lock mechanism unavailable and neither flock nor perl present: warning with continuation.
-- If running under CI (`CI=true|1`): `MAX_LINES` unlimited and check-only behavior unaffected.
-- If `RUN_*` is set to 0: skip step exactly as before.
-- If `FAIL_FAST=1`: stop after first failure in multi-step mode.
-- If `KEEP_DIR=1`: trap must preserve path and exit still returns original status.
-
-### Technical Debt Prevention
-
-- Keep source block order strict and canonical to minimize later merges.
-- Avoid in-script partial duplication of print logic to reduce drift from shared library contract.
-- Do not alter command argument handling for existing agent features; only move boilerplate.
-- Preserve line-level output where feasible, because this is a behavioral contract and tested by snapshots.
-
-### Engineering Level
-
-Use ' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-exec
-/bin/zsh -lc "sed -n '1,360p' /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-## Implementation Checklist
-- [ ] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
-- [ ] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
-- [ ] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
-- [ ] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
-- [ ] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
-- [ ] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
-- [ ] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
-- [ ] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
-- [ ] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
-- [ ] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
-- [ ] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
-- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-
-## Architecture Review
-
-### System Boundaries
-
-The runtime is split into three layers.
-exec
-/bin/zsh -lc "cat >> /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt <<'EOF'
-
-### Engineering Level
-
-Use minimal-variance refactoring. Move boilerplate only, preserve command ordering and output contracts, and avoid introducing generic abstractions beyond what this spec requires.
+### Edge-case handling requirements
+- CHANGED_FILES set and empty: validate each token is an existing `.sh` file.
+- CHANGED_FILES contains missing files: ignore with warning summary count mismatch.
+- Working directory has zero `.sh`: emit `SKIP` and exit 0.
+- Syntax command returns non-zero on one file: continue scanning all files to collect all syntax failures in one pass.
+- shellcheck output may include duplicate codes: deduplicate before composing Fix links.
+- `SHELLCHECK_SEVERITY=error` should downgrade warnings and still run severity-specific checks.
+- Unknown command and `-h|--help|help` should be handled before `need` checks that would block usage in non-project contexts.
 
 ## Test Strategy
 
-### Unit-level checks
+### Coverage plan
+- Unit-level command tests via direct invocation of `bash-agent` in fixture directories.
+- Integration-level scenario tests through `tests/run-scenarios.sh bash-agent`.
+- Static quality checks via shellcheck on the new script.
+- Manual behavior validation in mixed shell-script repo to verify CHANGED_FILES scoping.
 
-Use direct script-level invocations where available to validate helper contracts after refactor.
+### Explicit test coverage matrix
+- `help` command: prints usage and exits 0.
+- `syntax` with clean fixtures: returns PASS and no `Fix:`.
+- `syntax` with intentional syntax failure: returns FAIL, full log path present, `Fix:` includes re-run guidance.
+- `lint` with clean scripts: returns PASS.
+- `lint` with SC2086 fixture: returns FAIL, `Fix:` includes `https://www.shellcheck.net/wiki/SC2086`.
+- `all` command: runs syntax then lint with `RUN_*` gating and `FAIL_FAST` support.
+- `RUN_LINT=0` and `RUN_SYNTAX=0`: skip corresponding steps.
+- `CHANGED_FILES` scoping: includes only matching `.sh` and excludes directories and non-`.sh` entries.
+- `SHELLCHECK_SEVERITY=error`: ignore warning-only issues in fixture; pass/fail semantics follow chosen severity.
 
-- Source and run small sanity checks for "'`set -euo` handling and `help` invocation path behavior for each edited script.
-- Confirm lock fallback still executes when `flock` is missing by simulating missing command paths in an isolated environment if feasible.
-- Confirm `setup_outdir` and `setup_lock` invocation points are identical in all `main` paths.
+### Failure modes and error paths to verify
+- Missing required dependency (`bash` or `shellcheck`) exits 2 with `Missing required tool: <tool>`.
+- No scripts discovered after scan: `SKIP` and exit 0.
+- lock already held: user sees wait message and command proceeds when lock is released.
+- Scenario marked EXPECT_EXIT=1: exit 1 when syntax/lint fails.
 
-### Integration checks
-
-- `tests/run-scenarios.sh cargo-agent`
-- `tests/run-scenarios.sh npm-agent`
-- `tests/run-scenarios.sh terra-agent`
-- `shellcheck --severity=warning skills/cargo-agent/scripts/cargo-agent.sh`
-- `shellcheck --severity=warning skills/npm-agent/scripts/npm-agent.sh`
-- `shellcheck --severity=warning skills/terra-agent/scripts/terra-agent.sh`
-- `tests/run-scenarios.sh shellcheck`
-
-### End-to-end and output-parity checks
-
-- Run all three scenario suites and ensure exit codes still match expected clean/issues outcomes.
-- Capture baseline outputs for `clean`, `issues`, `help`, and lock fixtures before changes (if no baseline files exist, create temporary local baseline in work folder).
-- Re-run and diff outputs after refactor with `Time:` line normalization so only timing drift is accepted.
-- Confirm `tests/cargo-agent/flock/flock-test.sh` still prints wait message and exits successfully.
-
-### Failure modes and error paths
-
-- Missing required tools in scenario should continue to `SKIP` when declared in scenario file and still pass the suite.
-- Missing optional tools must still produce valid `SKIP` step results for affected steps.
-- Unknown commands and missing required project files must still return code 2.
-- Lock contention and lockfile cleanup should behave identically to avoid flaky CI.
-
-### Assertion strength expectations
-
-Assertions should be status-based plus specific output line checks (`Overall: PASS|FAIL`, `Result: PASS|FAIL`, `Fix:` when failing, lock waiting message, and cleanup behavior). Scenario-based tests should remain the primary oracle because they encode real command flows.
+### Test quality assertions
+- Assertions should include both command exit codes and output semantics (`Result: PASS/FAIL/SKIP`, `Fix:`, `Logs:` path).
+- For lint failures, assert wiki link format exactly `https://www.shellcheck.net/wiki/SC####`.
+- Keep assertions deterministic by controlling `MAX_LINES` in tests when comparing output.
 
 ## Performance Considerations
 
-### N+1 and heavy access patterns
-
-- Avoid adding repeated `cargo metadata` calls; keep current one-time/conditional invocation patterns.
-- Keep `CHANGED_FILES` scanning and log directory creation per-agent unchanged to avoid additional process overhead.
-- Avoid introducing extra `cat`/`grep` passes over large files in step routines.
-
-### Memory usage
-
-- Shared helper calls are lightweight and do not introduce persistent large data structures.
-- `terraform` and `cargo` outputs remain on disk in log files as before; no in-memory buffering explosion risk.
-
-### Caching opportunities
-
-- Existing cargo helper already caches metadata in `_WS_PACKAGES` and similar variables. Preserve this as-is.
-- Avoid clearing/transforming shared cached variables from `lib/x-agent-common.sh` so agent-level caches remain local.
-
-### Slow paths and optimization points
-
-- Lock contention path is intentionally blocking by design to preserve correctness under concurrent runs.
-- CLI argument parsing and env resolution are constant time.
-- Biggest runtime cost is external commands; no additional slow shell loops should be added.
-
-## Step-by-Step Implementation Plan
-
-1. What: Create a precise refactor inventory and confirm pre-change behavior boundaries.
-Why: this avoids accidental changes and lets us compare output parity.
-How: review the three target scripts and mark each occurrence of duplicated block functions/variables, lock setup, cleanup trap, and final output block.
-Edge Cases: avoid misclassifying domain logic as boilerplate, especially cargo’s SQLX skip/error hints.
-Tests: run `tests/run-scenarios.sh <agent>` on current branch and store output snapshots for critical commands.
-Risks: insufficient inventory can cause missed duplicate deletion or broken argument handling.
-
-2. What: Edit `skills/cargo-agent/scripts/cargo-agent.sh` to source shared helpers and remove duplicated boilerplate.
-Why: this script has the highest complexity and highest regression risk, so it should be stabilized first.
-How: add source block after `set -euo pipefail`, then remove exactly the shared variable/dependency/setup/lock/format helpers while keeping all step functions untouched.
-Edge Cases: preserve `JQ_BIN` handling, export behavior for `SQLX_OFFLINE`, and all path-sensitive log names.
-Tests: run `shellcheck --severity=warning skills/cargo-agent/scripts/cargo-agent.sh` and `tests/run-scenarios.sh cargo-agent`.
-Risks: helper replacement may alter output if final-print behavior is changed inappropriately.
-
-3. What: Edit `skills/npm-agent/scripts/npm-agent.sh` to source shared helpers and remove boilerplate.
-Why: npm has array-based scoping behavior and package-manager detection that must stay unchanged.
-How: insert shared source block, remove duplicate variable and helper code, and replace setup/lock setup calls with `setup_outdir "npm-agent"` and `setup_lock "npm-agent"`.
-Edge Cases: keep `CHANGED_FILES` filtering, `PM` detection, and step commands (`npm run`) unchanged.
-Tests: run `tests/run-scenarios.sh npm-agent` and check `npm-agent --help` still prints usage without requiring project context.
-Risks: helper replacement could inadvertently move `PM` detection outside of lock/setup ordering or break command scope assumptions.
-
-4. What: Edit `skills/terra-agent/scripts/terra-agent.sh` to source shared helpers and remove boilerplate.
-Why: terraform steps are highly sensitive to context changes; refactor must not alter command wrappers.
-How: apply the same source + replacement pattern as other scripts and retain terraform-specific `tf()` behavior and `TERRAFORM_CHDIR` resolution logic.
-Edge Cases: preserve `tflint` optional-skip behavior and plan-safe output path expectations.
-Tests: run `tests/run-scenarios.sh terra-agent` and `tests/cargo-agent/flock/flock-test.sh` only for lock behavior reference.
-Risks: lock and output-dir interactions can interfere with Terraform command wrappers if call sites are moved.
-
-5. What: Replace final summary output blocks with `print_overall` where appropriate.
-Why: reduces duplicated contract surface and aligns scripts with shared library contract.
-How: replace only equivalent final block forms and ensure `print_overall` receives `overall_ok` with no extra formatting around it.
-Edge Cases: do not remove custom command-specific status lines or extra logs that appear before final summary.
-Tests: run each agent in `help` and `all` paths and assert `Overall:` and `Logs:` formatting remains present.
-Risks: one-off summary differences may be interpreted as output drift.
-
-6. What: Verify concurrency path and lock behavior remain byte-for-byte equivalent.
-Why: lock behavior is explicitly validated via fixture and is easy to regress.
-How: run `tests/cargo-agent/flock/flock-test.sh` before and after refactor; compare message timing and completion behavior.
-Edge Cases: lock tool availability variation (`flock` vs `perl`) must remain covered via runtime fallback logic.
-Tests: run `bash tests/cargo-agent/flock/flock-test.sh` (through scenario runner or direct execution as fixture defines).
-Risks: changing lock acquisition order relative to setup can silently break wait messaging.
-
-7. What: Implement an output-parity capture check excluding allowed `Time:` variance.
-Why: spec requires byte-identical output except timing, and scenario runner only checks exit status.
-How: build a local diff helper that normalizes `Time: <number>s` from outputs and compares pre/post refactor captures for the three agents.
-Edge Cases: lock wait lines and path-sensitive values may vary with run context, so normalize only timing lines and ignore nondeterministic temp paths if needed.
-Tests: run parity check on `help`, `clean`, and `issues` commands for each agent.
-Risks: over-normalization can hide real regressions; keep normalization strict.
-
-8. What: Validate script line-count reduction and maintain a measured delta.
-Why: this is a direct acceptance target and helps confirm boilerplate removal.
-How: run `wc -l` on each edited script and compare with pre-refactor baselines.
-Edge Cases: baseline should be captured before edits; do not normalize generated temporary files.
-Tests: assert resulting file sizes are lower than baseline; if not, review accidental reinsertion of duplicated helpers.
-Risks: large in-script formatting adjustments can mask lack of real removal; focus on logical duplication removal.
-
-9. What: Run strict scenario gates with explicit filters and tool-specific variants.
-Why: CI-equivalent validation reduces surprise before final submission.
-How: run `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and optionally `tests/run-scenarios.sh` full in final pass.
-Edge Cases: optional-tool scenarios must still be skipped or passed depending on environment.
-Tests: verify all scenario exit codes and printed labels are unchanged.
-Risks: environment differences (local tools) could alter skip behavior and produce false negatives.
-
-10. What: Re-check installation and docs assumptions for this spec boundary.
-Why: source-path assumptions already depend on `install.sh` behavior from previous extraction.
-How: confirm no changes needed for this spec, but verify running a checked-out install path can still resolve `../../../lib` from all three scripts.
-Edge Cases: remote/local path structures should remain unchanged.
-Tests: quick smoke command: run each script once from expected install location with local checkout and `CI=true`.
-Risks: script path expectations can drift if someone already moved agent directories.
-
-11. What: Update `.ralph/exploration.md` after implementation if observed implementation details changed.
-Why: this keeps future agents from rediscovering unchanged coupling and command flow.
-How: add/update `Key Files & Roles`, `Dependency and coupling notes`, and test fixture notes if any new patterns emerged.
-Edge Cases: avoid documenting assumptions that depend on ephemeral local environment.
-Tests: manual consistency review only; keep concise and oriented to implementation.
-Risks: stale or contradictory exploration notes can increase future discovery cost.
-
-12. What: Finalize execution acceptance.
-Why: the phase is only complete when all acceptance checks pass and are validated by the agent loop.
-How: run `ralph validate work`, then keep a final note of outcomes and any follow-up risks.
-Edge Cases: if `ralph validate work` fails, return to step 2 or step 6 based on reported blockers.
-Tests: `ralph validate work` must report PASS.
-Risks: one failed gate requires iterative rerun after targeted fix.
+- `find` is O(number of files); prune known directories to prevent scanning dependency trees.
+- `bash -n` and `shellcheck` are per-file/external-process heavy; avoid unnecessary extra loops.
+- Use one discovery pass so both steps share the list.
+- Use log files for full output to avoid large in-memory buffers.
+- Memory usage remains bounded because only shell command lines and small arrays are held in process memory.
+- N+1 command patterns are avoided: shellcheck is invoked once with file arguments instead of per-file calls.
 
 ## Decision Log
 
-### Decision: Use shared setup helpers or retain per-agent setup code
-- Decision: Use `setup_outdir` and `setup_lock` from `lib/x-agent-common.sh` across all three scripts.
-- Options Considered: retain each agent'"'s existing setup logic; add partially shared wrappers while preserving original helpers; full shared helper adoption.
-- Chosen Approach: Full adoption of shared helpers because this directly validates FR-1 and reduces drift.
-- Implications: simpler scripts, reduced duplicated lifecycle logic, but requires stronger parity checks for output and lock timing.
+### Decision: Use shared-library helpers for output, lock, and temp lifecycle
+Decision: Use `lib/x-agent-common.sh` in bash-agent and avoid reimplementing boilerplate.
+Options considered:
+- Keep local boilerplate in bash-agent only.
+- Shared-lib-first agent implementation.
+- Generic wrapper around shellcheck library.
+Chosen approach: Shared-lib-first.
+Implications: Lower maintenance, consistent lock/log behavior, and alignment with existing `cargo-agent`, `npm-agent`, and `terra-agent`.
 
-### Decision: Keep source path pattern as mandated snippet
-- Decision: Use "'`SCRIPT_DIR` + `LIB_DIR="${SCRIPT_DIR}/../../../lib"` exactly as documented.
-- Options Considered: absolute path detection, fallback env override, `resolve_lib_dir()`.
-- Chosen Approach: mandated hardcoded relative path for this phase.
-- Implications: fast and compliant with the spec contract; leaves explicit coupling to script layout.
+### Decision: Use one aggregated syntax pass vs early-return-on-first-error
+Decision: Continue checking all discovered files and aggregate syntax failures.
+Options considered:
+- Exit immediately on first syntax failure.
+- Aggregate all syntax failures before returning.
+- Delegate to `bash -n` with file list.
+Chosen approach: Aggregate.
+Implications: Better developer visibility; output is more useful, slight runtime increase for bad checkouts.
 
-### Decision: Replace common final summary block with shared printer
-- Decision: Replace only equivalent final summary output with `print_overall`.
-- Options Considered: keep all final blocks inline; partial extraction with `print_result` only; full shared finalization.
-- Chosen Approach: use shared `print_overall` where behavior matches exactly.
-- Implications: less output duplication and consistent overall output, with explicit parity diff to guard accidental formatting drift.
+### Decision: Include one or many shellcheck wiki links in fix hint
+Decision: Include one or multiple links based on discovered unique error codes.
+Options considered:
+- No links.
+- One best-effort link.
+- One link per unique code with dedupe.
+Chosen approach: One link per unique code.
+Implications: richer remediation guidance, longer fix line in noisy lint sessions.
+
+### Decision: Scoping behavior when CHANGED_FILES is empty after filtering
+Decision: Skip step with explicit message.
+Options considered:
+- Treat as PASS.
+- Treat as SKIP.
+- Treat as FAIL.
+Chosen approach: SKIP.
+Implications: avoids false failure when user or caller passes empty scope but preserves meaningful feedback.
 
 ## Edge Cases and Risks
 
-- Output parity drift is possible in timing and trailing blank-line handling. Mitigation: normalized-diff comparison before final acceptance.
-- Lock path behavior can drift if setup order changes. Mitigation: run flock test fixture and compare message sequence.
-- `help` command must remain fast and independent of project root validation. Mitigation: keep early usage handling in each main function.
-- Optional tool absence can become false failures. Mitigation: scenario-required tools gating should remain unchanged and no new unconditional checks should be introduced.
-- Sourcing shared library without side effects must be preserved. Mitigation: no extra output in source phase; no additional initialization on source.
-- Path coupling risk if repo structure changes later. Mitigation: log as known coupling in exploration and architecture notes, then plan optional `resolve_lib_dir` follow-up.
+- `CHANGED_FILES` includes files with spaces in names: current split-based parsing is brittle; caller convention assumes space-separated file paths.
+- `.sh` files outside repo root returned by CHANGED_FILES: filter to `-f` avoids attempting missing paths.
+- Very large repositories with many `.sh` files: scan can be expensive; prune list should stay curated.
+- External tool missing in minimal environments: hard dependency check must fail fast.
+- `SHELLCHECK_SEVERITY` unknown: shellcheck should fail; script should surface command failure cleanly.
+- Scenarios with only syntax errors and no shellcheck violations still need deterministic fail reason and logs.
+- Windows line endings in fixtures: avoid regex assumptions in shellcheck code extraction that depend on Unix LF; use tolerant parsing.
+
+## Step-by-Step Implementation Plan
+
+1. What: Build a minimal `bash-agent.sh` skeleton that sources `lib/x-agent-common.sh` after `set -euo pipefail`, defines required environment toggles, and initializes output/log lifecycle.
+Why: This anchors bash-agent in repository-wide helper conventions and avoids duplicated boilerplate.
+How: Add script header, `SCRIPT_DIR`, `LIB_DIR`, shared source line, `RUN_SYNTAX`, `RUN_LINT`, `SHELLCHECK_SEVERITY`, and call `setup_outdir "bash-agent"` + `setup_lock "bash-agent"` near startup.
+Edge Cases: Help path should work before project checks; unknown command should print usage and exit 2.
+Tests: Manual `bash-agent --help` and `bash-agent syntax` in `tests/bash-agent/clean`.
+Risks: Accidentally using local `OUTDIR` setup instead of `setup_outdir`.
+
+2. What: Implement file discovery function that produces a shared `sh_files` list used by both steps.
+Why: Removes duplication and guarantees syntax/lint execute on the same target set.
+How: Use `CHANGED_FILES` branch first (filter existing `*.sh`), else recursive `find` with `-prune` for `.git`, `node_modules`, and `vendor`; print `Discovered N .sh file(s)`.
+Edge Cases: Nonexistent CHANGED_FILES entries, directories, hidden directories, no files found.
+Tests: Synthetic calls with explicit CHANGED_FILES plus no-CHANGED_FILES directory scan.
+Risks: Incorrect prune ordering could accidentally skip valid files.
+
+3. What: Implement `run_syntax` step.
+Why: Implements FR-6 and FR-3 `syntax` capability.
+How: Iterate over collected files; for each call `bash -n` and append output to `${OUTDIR}/syntax.log`; track first/aggregate failures; print truncated `Output` and `Fix: resolve syntax errors above, then re-run: /bash-agent syntax` on failure, then `print_result`.
+Edge Cases: Files with permissions denied; transient parse errors; zero files discovered.
+Tests: `tests/bash-agent/issues` with a script containing a syntax error and `tests/bash-agent/clean` valid script.
+Risks: Short-circuiting on first file misses additional syntax failures.
+
+4. What: Implement `run_lint` step with shellcheck severity override.
+Why: Implements FR-6 and FR-13 acceptance around shellcheck output and links.
+How: Run one `shellcheck --severity=${SHELLCHECK_SEVERITY}` call with all discovered files; write to `${OUTDIR}/lint.log`; on failure parse unique codes via regex; construct `Fix` message with wiki links for each code and re-run command suggestion.
+Edge Cases: `SHELLCHECK_SEVERITY=error` with warning-only issues; duplicate codes; very long error lists.
+Tests: Issue fixture intentionally causing SC2086 and assertion for link presence.
+Risks: Regex parsing could over-collect false positives from file content.
+
+5. What: Implement `main` command dispatch with `--fail-fast`, `RUN_*` toggles, and robust defaults.
+Why: FR-5 and FR-4 require predictable orchestration and skip semantics.
+How: Parse `--fail-fast`; command default to `all`; route `syntax`, `lint`, `all`, and help aliases; apply `should_continue` in `all` path.
+Edge Cases: Empty args, command aliases, mixed uppercase/lowercase command attempts.
+Tests: Direct invocation matrix: `all`, `syntax`, `lint`, `--fail-fast syntax`, `RUN_LINT=0 bash-agent all`.
+Risks: Incorrect variable scoping for `overall_ok` from step failures.
+
+6. What: Add `skills/bash-agent/SKILL.md` with trigger language and allowed tools.
+Why: Required by FR-11 and for agent orchestration compatibility.
+How: Clone style from `skills/npm-agent/SKILL.md`; include `SHELLCHECK_SEVERITY=*`, `RUN_*`, and standard shared knobs.
+Edge Cases: Keep script path examples consistent with others (`scripts/bash-agent.sh*`).
+Tests: Manual inspection and a quick grep check that allowed patterns include `SHELLCHECK_SEVERITY=`.
+Risks: Mismatched trigger language can reduce downstream routing accuracy.
+
+7. What: Add scenario fixtures for `clean` and `issues`.
+Why: Required by FR-13 and overall acceptance.
+How: Create `tests/bash-agent/clean/scenario.env` and `tests/bash-agent/issues/scenario.env`; add valid `scripts/good.sh` and intentionally lint-broken `scripts/bad.sh`.
+Edge Cases: Ensure fixture paths use `scripts/` folder under scenario and keep fixture complexity minimal.
+Tests: `tests/run-scenarios.sh bash-agent`.
+Risks: Fixture scripts accidentally include hidden syntax errors in clean case.
+
+8. What: Update `install.sh` with `bash-agent` in `SKILLS`, dependency checks, and agent snippet.
+Why: Required by FR-12 and expected by packaging flow.
+How: Add `bash-agent` to default list, add `check_optional_deps` branch for `shellcheck`, add `bash-agent)` branch in `print_agents_md_snippet`.
+Edge Cases: Optional check output should remain aligned with install style and not block installation.
+Tests: `sh install.sh --help` to ensure no syntax issues and branch path review via source inspection.
+Risks: Missing branch can drop bash-agent from install output and snippet recommendations.
+
+9. What: Update `README.md` to expose bash-agent availability.
+Why: Required by FR-12 completion and discoverability.
+How: Add table row and usage block with examples for `syntax`, `lint`, and `all`.
+Edge Cases: Keep markdown table alignment and avoid breaking existing links/ordering.
+Tests: Quick readability verification in diff review.
+Risks: Skipping usage examples can create discoverability gap.
+
+10. What: Run quality gates for only this implementation scope.
+Why: Ensures FR-13 and shell correctness before handoff.
+How: Execute `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent`.
+Edge Cases: Scenarios skipped due missing local shellcheck or shell; validate output includes skip reasons.
+Tests: Gate command outputs and PASS/FAIL states.
+Risks: Tool availability mismatch on contributor machines causes false-negative local runs.
+
+11. What: Update `.ralph/exploration.md` with newly mapped files and workflow touchpoints.
+Why: Required for future specs and onboarding continuity.
+How: Add bash-agent-related key files and scenario layout notes; mention new fixture path conventions.
+Edge Cases: Keep file concise; do not over-document implementation details.
+Tests: Visual review that sections remain machine-readable and up to date.
+Risks: Drift if outdated architecture notes are preserved.
+
+12. What: Final gate validation.
+Why: Required by protocol before completion.
+How: Execute `ralph validate work` and require PASS in logs.
+Edge Cases: If validation fails, fix plan artifact only and rerun.
+Tests: `ralph validate work`.
+Risks: Validation format mismatch from checklist structure.
+
 EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
 
-exec
-/bin/zsh -lc "sed -n '1,520p' /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
-## Implementation Checklist
-- [ ] 1. Trace the current shared-helpers usage in cargo/npm/terra scripts and map each exact removal candidate to the corresponding `lib/x-agent-common.sh` export.
-- [ ] 2. Capture a baseline expectation of current output behavior from `tests/run-scenarios.sh` (especially `Step`, `Result`, `Fix`, `Overall`, and lock-wait lines) before code edits.
-- [ ] 3. Add `SCRIPT_DIR`/`LIB_DIR` resolution and `source "${LIB_DIR}/x-agent-common.sh"` immediately after `set -euo pipefail` in `skills/cargo-agent/scripts/cargo-agent.sh`.
-- [ ] 4. Remove from `skills/cargo-agent/scripts/cargo-agent.sh` all duplicated boilerplate: `KEEP_DIR`, `MAX_LINES`, `FAIL_FAST`, `CHANGED_FILES`, `TMPDIR_ROOT` defaults, `need`, `hr`, `step`, `fmt_elapsed`, `should_continue`, cleanup trap, and inline lock block.
-- [ ] 5. Replace `cargo-agent` setup invocations with `setup_outdir "cargo-agent"` and `setup_lock "cargo-agent"`, preserving command ordering and lock timing side effects.
-- [ ] 6. Add `source` lines and remove duplicated boilerplate in `skills/npm-agent/scripts/npm-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and retaining npm-specific helpers and commands.
-- [ ] 7. Add `source` lines and remove duplicated boilerplate in `skills/terra-agent/scripts/terra-agent.sh` using the same `setup_outdir`/`setup_lock` pattern and preserving terraform command flow.
-- [ ] 8. Where any script currently prints final `Overall`/`Logs`, replace only the common final block with `print_overall "$overall_ok"` (if equivalent behavior is preserved).
-- [ ] 9. Revalidate step sequencing for each agent so `RUN_<STEP>` logic, `--fail-fast`, and `help` path still behave identically after helper refactor.
-- [ ] 10. Run targeted checks: `tests/run-scenarios.sh cargo-agent`, `tests/run-scenarios.sh npm-agent`, `tests/run-scenarios.sh terra-agent`, and focused shellcheck on the three edited scripts.
-- [ ] 11. Verify measurable file size reduction versus pre-edit baselines and confirm no helper behavior regressions from `setup_outdir`/`setup_lock` (especially lock contention and cleanup semantics).
-- [ ] 12. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema
-- [ ] 13. All acceptance criteria pass — run `ralph validate work` and confirm PASS
-
-## Architecture Review
-
-### System Boundaries
-
-The runtime is split into three layers.
 codex
-I found a small formatting artifact in the generated plan text and I’ll fix it now before validation so the checklist and required structure are clean.
-exec
-/bin/zsh -lc "python - <<'PY'
-from pathlib import Path
-p = Path('/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt')
-text = p.read_text()
-text = text.replace('### Engineering Level\\n\\nUse \\n### Engineering Level\\n\\nUse minimal-variance refactoring.', '### Engineering Level\\n\\nUse minimal-variance refactoring.')
-p.write_text(text)
-PY" in /Users/chrisraethke/projects/x-agent exited 127 in 123ms:
-pyenv: python: command not found
+I finished drafting the plan file; next I’ll update `.ralph/exploration.md` with the new bash-agent touchpoints so future iterations keep the same orientation quality.
+file update
+M /Users/chrisraethke/projects/x-agent/.ralph/exploration.md
+@@ -8,3 +8,6 @@
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+@@ -29,2 +32,3 @@
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+apply_patch(auto_approved=true) exited 0 in 33ms:
+Success. Updated the following files:
+M .ralph/exploration.md
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
 
-The `python' command exists in these Python versions:
-  3.12.7
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
 
-Note: See 'pyenv help global' for tips on allowing both
-      python2 and python3 to be found.
-exec
-/bin/zsh -lc "perl -0pi -e 's/### Engineering Level\\n\\nUse \\n### Engineering Level\\n\\nUse minimal-variance refactoring\\./### Engineering Level\\n\\nUse minimal-variance refactoring./' /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt" in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-
-exec
-/bin/zsh -lc 'grep -n "Engineering Level" -A3 -B2 /Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-122-- Preserve line-level output where feasible, because this is a behavioral contract and tested by snapshots.
-123-
-124:### Engineering Level
-125-
-126-Use minimal-variance refactoring. Move boilerplate only, preserve command ordering and output contracts, and avoid introducing generic abstractions beyond what this spec requires.
-127-
 codex
-I’ve finalized the plan draft and cleaned the heading duplication. Next I’ll run `ralph validate plan` to satisfy the required validation gate before wrapping up.
+I’ll add one high-leverage automation opportunity now (from this planning pass) because we identified a repeatable validation gap around output/metadata consistency in new-agent plans.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
-ralph validate plan
-----------------------------------------
-  PASS: work-plan.txt has valid format
-  INFO: 13 checklist items found
-----------------------------------------
-RESULT: PASS
-codex
-I’ll add one high-leverage future-proofing note in `.ralph/automation-opportunities.md` for output-parity checks, since scenario fixtures currently validate exit status but not diff-level drift.
+/bin/zsh -lc 'date -u +%Y-%m-%dT%H:%M:%SZ' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+2026-03-08T17:10:01Z
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
+
 exec
-/bin/zsh -lc "cat > /Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md <<'EOF'
-# Automation Opportunities for x-agent
+/bin/zsh -lc "cat <<'EOF' >> .ralph/automation-opportunities.md
 
-## [2026-03-08T16:59:00Z] output-parity-diff
+## [2026-03-08T17:10:01Z] bash-agent-exploration-check
 
-**Frequency**: Every refactor touching shared helpers in runners, especially spec-02 and similar boilerplate migrations
+**Frequency**: First occurrence in multi-step feature plans
 
 **Priority**: HIGH
 
-**Current Issue**: Scenario tests enforce command exit codes and shellcheck only; they do not compare full CLI output text. This allows subtle regressions in "'`Step`, `Result`, `Fix`, and `Overall` formatting to go untested.
+**Current Issue**: New agent planning often forgets to update "'`find`-exclude list and fixture expectations together, causing either over-scoped script checks or expensive scans.
 
-**Manual Check**: Capture scenario outputs before/after a refactor and manually diff fixture logs, then visually inspect for non-timing drift.
+**Manual Check**: Before implementation, verify all planned new-agent scenarios and discovery paths are documented in `.ralph/exploration.md` and mirrored in plan assumptions.
 
-**Automated Check**: Add a `tests/run-scenarios.sh` diff mode that captures output for `clean`/`issues` fixtures and compares against baseline snapshots with a fixed normalizer that removes `Time: [0-9]+s` lines only.
+**Automated Check**: Add a planning validation rule that ensures `x-agent` plans requiring new agents include both script path and fixture path updates in `.ralph/exploration.md` or block `ralph validate plan`.
 
 **Status**: PENDING
-EOF' in /Users/chrisraethke/projects/x-agent succeeded in 51ms:
+EOF' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
 
 codex
-I’ve completed the plan artifact and added one automation-opportunity note. I’ll quickly verify touched files and then provide the final handoff summary.
+The plan and exploration updates are in place. I’ll run `ralph validate plan` now, then follow with the required `ralph validate work` gate from your checklist contract.
 exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && git status --short' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
- M .ralph/exploration.md
- M .ralph/plan-agent.log
- M .ralph/ralph-state.json
- M .ralph/ralph.log
- M .ralph/work-plan.txt
-?? .ralph/automation-opportunities.md
-exec
-/bin/zsh -lc 'cd /Users/chrisraethke/projects/x-agent && ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 53ms:
+/bin/zsh -lc 'ralph validate plan' in /Users/chrisraethke/projects/x-agent succeeded in 52ms:
 ralph validate plan
 ----------------------------------------
   PASS: work-plan.txt has valid format
-  INFO: 13 checklist items found
+  INFO: 14 checklist items found
 ----------------------------------------
 RESULT: PASS
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
+
+exec
+/bin/zsh -lc 'ralph validate work' in /Users/chrisraethke/projects/x-agent exited 1 in 52ms:
+ralph validate work
+----------------------------------------
+  PASS: work-summary.txt exists (56 lines)
+  FAIL: 14 unchecked items remain in work-plan.txt
+    - [ ] 1. Confirm shared-library patterns and existing helper contracts are reused (`lib/x-agent-common.sh`, `setup_outdir`, `setup_lock`, `print_overall`) and no per-agent exception handling is introduced in bash-agent.
+    - [ ] 2. Create `skills/bash-agent/scripts/bash-agent.sh` with shared-lib sourcing, required knobs, and command dispatch structure that supports `syntax`, `lint`, `all`, `--fail-fast`, `help`, and unknown-command handling.
+    - [ ] 3. Implement `.sh` discovery logic with explicit behavior for `CHANGED_FILES` and recursive scan fallback, including `.git`, `node_modules`, and `vendor` exclusion.
+    - [ ] 4. Implement `run_syntax` step using `bash -n` across discovered files, aggregate full diagnostics to a per-step log, and print truncated output + `Fix:` hint on failure.
+    - [ ] 5. Implement `run_lint` step using `shellcheck --severity=${SHELLCHECK_SEVERITY}` across discovered files, aggregate logs, and produce shellcheck wiki link(s) in `Fix:` on failure.
+    - [ ] 6. Ensure command path supports `SHELLCHECK_SEVERITY` override and default severity semantics while keeping required `MAX_LINES`/`KEEP_DIR`/`FAIL_FAST` behavior intact.
+    - [ ] 7. Create `skills/bash-agent/SKILL.md` with trigger language and `allowed-tools` entries for RUN knobs, `SHELLCHECK_SEVERITY`, `CHANGED_FILES`, and shared controls.
+    - [ ] 8. Add scenario fixtures under `tests/bash-agent/clean` and `tests/bash-agent/issues`, including `scenario.env` and fixture scripts.
+    - [ ] 9. Validate fixture behavior: `clean` exits 0 with `shellcheck`+`bash` available, and `issues` exits 1 for intentional lint violation and/or shell syntax issue.
+    - [ ] 10. Update `install.sh` to include `bash-agent` in `SKILLS`, add optional dependency check messaging for `shellcheck`, and add `bash-agent` line to `print_agents_md_snippet`.
+    - [ ] 11. Update `README.md` with bash-agent row in Available Agents and usage examples showing `syntax`, `lint`, and `all`.
+    - [ ] 12. Run `shellcheck --severity=warning skills/bash-agent/scripts/bash-agent.sh` and `tests/run-scenarios.sh bash-agent` locally in validation slice, then fix and rerun until green.
+    - [ ] 13. Update `.ralph/exploration.md` if any implementation changed documented files, patterns, or schema.
+    - [ ] 14. All acceptance criteria pass — run `ralph validate work` and confirm PASS.
+----------------------------------------
+RESULT: FAIL
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
+
 codex
-Plan written to `/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt` and validated.
+Plan created and recorded at:
+- [.ralph/work-plan.txt](/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt)
 
-Also updated:
-- `/Users/chrisraethke/projects/x-agent/.ralph/exploration.md`
-- `/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md`
+Exploration notes updated at:
+- [.ralph/exploration.md](/Users/chrisraethke/projects/x-agent/.ralph/exploration.md)
 
-Validation run:
-- `ralph validate plan` → `PASS` (format valid, 13 checklist items)
+Implementation insight recorded:
+- [.ralph/automation-opportunities.md](/Users/chrisrahtke/projects/x-agent/.ralph/automation-opportunities.md) (high-level plan automation gap for new-agent discovery/performance consistency)
 
-Ready to execute the work plan whenever you want.
+Validation results:
+- `ralph validate plan` → PASS
+- `ralph validate work` → FAIL (as expected in PLAN phase) with 14 unchecked checklist items remaining
+
+If you want, I can now proceed directly to the WORK phase for this spec and implement the changes end-to-end.
+file update:
+diff --git a/.ralph/exploration.md b/.ralph/exploration.md
+index 884172a167ccaa767af4e93c6ebddd6e28e0a041..0a4f7c7c3619647ccdd6af2ba42d025f94b0789c
+--- a/.ralph/exploration.md
++++ b/.ralph/exploration.md
+@@ -6,7 +6,10 @@
+ - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
+ - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
+ - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
++- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
++- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+ - `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
++- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
+ - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
+ - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
+ - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
+@@ -27,6 +30,7 @@
+ - `CI` detection switches behavior for line truncation and format checks: CI defaults to `MAX_LINES=999999` and check-only modes where applicable.
+ - Optional tools use skip/fallback behavior rather than hard failure; required tools must trigger `exit 2`.
+ - Bash compatibility baseline is 3.2: no associative arrays, no `readarray`, no `|&`, no associative case fallthrough.
++- New agents should support `--help`/`help`/`-h` before any project-existence checks and reuse `setup_outdir` + `setup_lock` from `lib/x-agent-common.sh`.
+ 
+ ## Database Schema
+ 
+
 tokens used
-115,720
-Plan written to `/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt` and validated.
+99,311
+Plan created and recorded at:
+- [.ralph/work-plan.txt](/Users/chrisraethke/projects/x-agent/.ralph/work-plan.txt)
 
-Also updated:
-- `/Users/chrisraethke/projects/x-agent/.ralph/exploration.md`
-- `/Users/chrisraethke/projects/x-agent/.ralph/automation-opportunities.md`
+Exploration notes updated at:
+- [.ralph/exploration.md](/Users/chrisraethke/projects/x-agent/.ralph/exploration.md)
 
-Validation run:
-- `ralph validate plan` → `PASS` (format valid, 13 checklist items)
+Implementation insight recorded:
+- [.ralph/automation-opportunities.md](/Users/chrisrahtke/projects/x-agent/.ralph/automation-opportunities.md) (high-level plan automation gap for new-agent discovery/performance consistency)
 
-Ready to execute the work plan whenever you want.
+Validation results:
+- `ralph validate plan` → PASS
+- `ralph validate work` → FAIL (as expected in PLAN phase) with 14 unchecked checklist items remaining
+
+If you want, I can now proceed directly to the WORK phase for this spec and implement the changes end-to-end.

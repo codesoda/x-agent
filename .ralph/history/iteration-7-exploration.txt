@@ -6,10 +6,10 @@
 - `skills/cargo-agent/scripts/cargo-agent.sh`: Rust workflow runner sourcing `lib/x-agent-common.sh`; contains run_x step handlers and domain-specific helpers (jq diagnostics, package resolution, nextest).
 - `skills/npm-agent/scripts/npm-agent.sh`: Node workflow runner sourcing `lib/x-agent-common.sh`; contains package-manager detection and file-scoping logic for lint/format.
 - `skills/terra-agent/scripts/terra-agent.sh`: Terraform workflow runner sourcing `lib/x-agent-common.sh`; contains safe init/plan behavior and optional tflint checks.
-- `skills/bash-agent/scripts/bash-agent.sh`: Bash/Shell agent sourcing `lib/x-agent-common.sh`; runs `bash -n` syntax checking and `shellcheck` linting with severity control. Uses `print_result` from shared lib for step output.
-- `skills/bash-agent/SKILL.md`: trigger metadata and allowed tool declarations for shell script checks, including `SHELLCHECK_SEVERITY` knob.
-- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment. Excludes `tests/*/issues/*` from project-wide shellcheck scan since issue fixtures are intentionally bad.
-- `tests/bash-agent/`: clean/issues fixture set; clean has `scripts/good.sh` (valid script), issues has `scripts/bad.sh` (SC2034/SC2154 shellcheck warnings).
+- `skills/bash-agent/scripts/bash-agent.sh`: planned Bash/Shell agent using shared library for syntax checking (`bash -n`) and shellcheck lint.
+- `skills/bash-agent/SKILL.md`: planned trigger metadata and allowed tool declarations for shell script checks.
+- `tests/run-scenarios.sh`: single orchestrator for shellcheck and fixture execution, including optional filtering by agent/scenario fragment.
+- `tests/bash-agent/`: new clean/issues fixture set for FR-13 implementation.
 - `tests/*/scenario.env`: declares `SCENARIO_NAME`, `AGENT_SCRIPT`, `RUN_ARGS`, `EXPECT_EXIT`, and `REQUIRED_TOOLS`.
 - `tests/cargo-agent/flock/flock-test.sh`: validates lock wait behavior using a competing holder process and waiting-message assertions.
 - `install.sh`: installs skills, patches paths, and now includes `lib/x-agent-common.sh` for both local/remote install modes.
