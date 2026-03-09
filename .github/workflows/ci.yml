@@ -17,7 +17,8 @@ jobs:
       - name: ShellCheck agent scripts
         run: |
           shopt -s globstar
-          shellcheck --severity=warning skills/*/scripts/*.sh tests/run-scenarios.sh tests/**/*.sh install.sh
+          shellcheck --severity=warning skills/*/scripts/*.sh lib/*.sh install.sh \
+            $(find tests -name '*.sh' -not -path '*/issues/*')
 
   # ── cargo-agent scenarios ───────────────────────────────────────────
   cargo-agent:
