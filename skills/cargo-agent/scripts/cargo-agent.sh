@@ -5,14 +5,12 @@ set -euo pipefail
 # deps: bash, mktemp, jq
 # optional: cargo-nextest (for tests)
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
 JQ_BIN="${JQ_BIN:-jq}"
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 RUN_CLIPPY="${RUN_CLIPPY:-1}"     # set to 0 to skip clippy
 RUN_FMT="${RUN_FMT:-1}"           # set to 0 to skip fmt
@@ -20,76 +18,15 @@ RUN_CHECK="${RUN_CHECK:-1}"       # set to 0 to skip check
 RUN_SQLX="${RUN_SQLX:-1}"         # set to 0 to skip sqlx cache verify
 USE_NEXTEST="${USE_NEXTEST:-auto}" # auto|1|0
 RUN_INTEGRATION="${RUN_INTEGRATION:-0}" # set to 1 to run integration tests
-FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
-CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes to affected packages
 
 # Default to SQLx offline mode, but allow explicit overrides (e.g. CI sets false).
 export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"
 
-TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
-OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/cargo-agent.XXXXXX")"
-
-cleanup() {
-  local code="$?"
-  if [[ "$KEEP_DIR" == "1" || "$code" != "0" ]]; then
-    echo "Logs kept in: $OUTDIR"
-  else
-    rm -rf "$OUTDIR"
-  fi
-  exit "$code"
-}
-trap cleanup EXIT
-
-# Workflow-level lock: only one cargo-agent instance runs at a time.
-# Prevents overlapping builds when agents invoke the script concurrently.
-LOCKFILE="${TMPDIR_ROOT%/}/cargo-agent.lock"
-exec 9>"$LOCKFILE"
-if command -v flock >/dev/null 2>&1; then
-  if ! flock -n 9; then
-    echo "cargo-agent: waiting for another run to finish..."
-    flock 9
-  fi
-else
-  # macOS: flock not available, use perl as a portable fallback.
-  if ! command -v perl >/dev/null 2>&1; then
-    echo "Warning: neither flock nor perl available; skipping workflow lock" >&2
-  else
-    perl -e '
-      use Fcntl ":flock";
-      open(my $fh, ">&=", 9) or die "fdopen: $!";
-      if (!flock($fh, LOCK_EX | LOCK_NB)) {
-        print STDERR "cargo-agent: waiting for another run to finish...\n";
-        flock($fh, LOCK_EX) or die "flock: $!";
-      }
-    '
-  fi
-fi
-
-need() {
-  command -v "$1" >/dev/null 2>&1 || { echo "Missing required tool: $1" >&2; exit 2; }
-}
+setup_outdir "cargo-agent"
+setup_lock "cargo-agent"
 
 need "$JQ_BIN"
 need cargo
-
-hr() { echo "------------------------------------------------------------"; }
-
-# Returns 0 (continue) unless fail-fast is on and a step already failed.
-should_continue() { [[ "$FAIL_FAST" != "1" || "$overall_ok" == "1" ]]; }
-
-STEP_START_SECONDS=0
-
-step() {
-  local name="$1"
-  STEP_START_SECONDS=$SECONDS
-  hr
-  echo "Step: $name"
-}
-
-fmt_elapsed() {
-  local elapsed=$(( SECONDS - STEP_START_SECONDS ))
-  echo "Time: ${elapsed}s"
-}
 
 # Extract compiler diagnostics (errors/warnings) from cargo JSON stream.
 # Outputs: lines like "error: message" and optionally a location line.
@@ -649,9 +586,7 @@ main() {
       ;;
   esac
 
-  hr
-  echo "Overall: $([[ "$overall_ok" == "1" ]] && echo PASS || echo FAIL)"
-  echo "Logs: $OUTDIR"
+  print_overall "$overall_ok"
   [[ "$overall_ok" == "1" ]]
 }
 

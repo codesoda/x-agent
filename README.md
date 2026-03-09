@@ -15,9 +15,17 @@ Standard build tools produce walls of text. Agents waste context window parsing 
 
 | Agent | Toolchain | Steps |
 |-------|-----------|-------|
+| `ansible-agent` | Ansible | lint (ansible-lint), syntax (ansible-playbook --syntax-check) |
+| `bash-agent` | Bash/Shell | syntax (bash -n), lint (shellcheck) |
 | `cargo-agent` | Rust | fmt, check, clippy, test (nextest) |
+| `docker-agent` | Docker | lint (hadolint), build-check (BuildKit) |
+| `gha-agent` | GitHub Actions | lint (actionlint) |
+| `go-agent` | Go | fmt (gofmt), vet, staticcheck, test |
+| `helm-agent` | Helm | lint, template |
+| `kube-agent` | Kubernetes | validate (kubeconform/kubeval) |
 | `npm-agent` | Node.js | format, lint, typecheck, test, build |
 | `py-agent` | Python | format (ruff/black), lint (ruff/flake8), typecheck (mypy/pyright), test (pytest) |
+| `sql-agent` | SQL | lint (sqlfluff), fix (sqlfluff fix) |
 | `terra-agent` | Terraform | fmt (check/fix), safe init, plan-safe, validate, lint (tflint) |
 
 ## Quick Start
@@ -43,6 +51,9 @@ It also prints a short AGENTS.md/CLAUDE.md policy snippet you can copy/paste.
 ### Use directly (no install)
 
 ```sh
+# Ansible project
+path/to/x-agent/skills/ansible-agent/scripts/ansible-agent.sh
+
 # Rust project
 path/to/x-agent/skills/cargo-agent/scripts/cargo-agent.sh
 
@@ -52,11 +63,49 @@ path/to/x-agent/skills/npm-agent/scripts/npm-agent.sh
 # Python project
 path/to/x-agent/skills/py-agent/scripts/py-agent.sh
 
+# Docker project
+path/to/x-agent/skills/docker-agent/scripts/docker-agent.sh
+
+# GitHub Actions project
+path/to/x-agent/skills/gha-agent/scripts/gha-agent.sh
+
+# Go project
+path/to/x-agent/skills/go-agent/scripts/go-agent.sh
+
+# Helm project
+path/to/x-agent/skills/helm-agent/scripts/helm-agent.sh
+
+# Kubernetes project
+path/to/x-agent/skills/kube-agent/scripts/kube-agent.sh
+
+# SQL project
+path/to/x-agent/skills/sql-agent/scripts/sql-agent.sh
+
 # Terraform project
 path/to/x-agent/skills/terra-agent/scripts/terra-agent.sh
 ```
 
 ## Usage
+
+### ansible-agent
+
+```sh
+ansible-agent.sh              # full suite: lint + syntax
+ansible-agent.sh lint         # ansible-lint check only
+ansible-agent.sh syntax       # ansible-playbook --syntax-check only
+FMT_MODE=fix ansible-agent.sh lint  # auto-fix lint issues
+```
+
+`ansible-agent` runs `ansible-lint` for linting (auto-fix locally, check-only in CI) and `ansible-playbook --syntax-check` on discovered playbooks. Reports SKIP when no YAML files are found.
+
+### bash-agent
+
+```sh
+bash-agent.sh              # full suite: syntax + lint
+bash-agent.sh syntax       # bash -n syntax check only
+bash-agent.sh lint         # shellcheck lint only
+SHELLCHECK_SEVERITY=error bash-agent.sh lint  # only errors, ignore warnings
+```
 
 ### cargo-agent
 
@@ -67,6 +116,58 @@ cargo-agent.sh clippy       # clippy only
 cargo-agent.sh test         # tests only
 cargo-agent.sh test -p api  # tests in a specific crate
 ```
+
+### docker-agent
+
+```sh
+docker-agent.sh                        # full suite: lint only (build-check off by default)
+docker-agent.sh lint                   # hadolint check only
+RUN_BUILD_CHECK=1 docker-agent.sh all  # lint + BuildKit check
+```
+
+`docker-agent` discovers `Dockerfile`, `Dockerfile.*`, and `*.dockerfile` files recursively. `build-check` uses `docker build --check` (BuildKit lint mode) and defaults to OFF. Reports SKIP when no Dockerfiles are found.
+
+### gha-agent
+
+```sh
+gha-agent.sh              # lint all workflow files
+gha-agent.sh lint         # actionlint check only
+```
+
+`gha-agent` runs `actionlint` on `.github/workflows/*.yml` and `*.yaml` files. Reports SKIP when no workflows directory exists.
+
+### go-agent
+
+```sh
+go-agent.sh                 # full suite: fmt + vet + staticcheck + test
+go-agent.sh fmt             # gofmt check/fix
+go-agent.sh vet             # go vet analysis
+go-agent.sh test            # tests only
+FMT_MODE=fix go-agent.sh fmt  # auto-fix formatting
+```
+
+`go-agent` uses `gofmt` for formatting (auto-fix locally, check-only in CI), `go vet` for analysis, optional `staticcheck` for linting, and `go test` for tests.
+
+### helm-agent
+
+```sh
+helm-agent.sh              # full suite: lint + template
+helm-agent.sh lint         # helm lint only
+helm-agent.sh template     # helm template only
+CHART_DIR=charts/myapp helm-agent.sh all  # explicit chart directory
+```
+
+`helm-agent` auto-detects chart directories by searching for `Chart.yaml`. Use `CHART_DIR` to override. Reports SKIP when no charts are found.
+
+### kube-agent
+
+```sh
+kube-agent.sh              # full suite: validate
+kube-agent.sh validate     # validate manifests only
+KUBE_SCHEMAS_DIR=path kube-agent.sh all  # custom schema location
+```
+
+`kube-agent` auto-detects kubeconform or kubeval and validates all `.yaml`/`.yml` files containing Kubernetes resource definitions (`apiVersion:` + `kind:`). Use `KUBE_SCHEMAS_DIR` for custom schemas. Reports SKIP when no manifests are found.
 
 ### npm-agent
 
@@ -90,6 +191,18 @@ py-agent.sh test -k login  # tests matching "login"
 ```
 
 py-agent auto-detects your runner (uv, poetry, or plain python) and finds tools (ruff, black, flake8, mypy, pyright, pytest).
+
+### sql-agent
+
+```sh
+sql-agent.sh                                # full suite: lint only (fix off by default)
+sql-agent.sh lint                           # sqlfluff lint only
+sql-agent.sh fix                            # sqlfluff fix (auto-fix)
+RUN_FIX=1 sql-agent.sh all                 # lint + fix (fix runs first)
+SQLFLUFF_DIALECT=postgres sql-agent.sh lint  # specify dialect
+```
+
+`sql-agent` discovers `.sql` files recursively and lints them with `sqlfluff`. Fix defaults to OFF — enable with `RUN_FIX=1` or `FMT_MODE=fix`. In CI, fix is forced to check-only mode.
 
 ### terra-agent
 
@@ -152,9 +265,17 @@ On **PASS**, temp logs are cleaned up automatically. On **FAIL** (or `KEEP_DIR=1
 
 The `skills/` directory contains Claude Code skill definitions. After installing, agents like Claude Code can invoke these as skills:
 
+- `/ansible-agent` — run Ansible playbook checks
+- `/bash-agent` — run shell script checks
 - `/cargo-agent` — run Rust checks
+- `/docker-agent` — run Dockerfile linting
+- `/gha-agent` — run GitHub Actions workflow linting
+- `/go-agent` — run Go checks
+- `/helm-agent` — run Helm chart checks
+- `/kube-agent` — run Kubernetes manifest validation
 - `/npm-agent` — run Node.js checks
 - `/py-agent` — run Python checks
+- `/sql-agent` — run SQL linting/fixing
 - `/terra-agent` — run Terraform checks/fixes
 
 ## License

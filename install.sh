@@ -24,7 +24,7 @@ SOURCE_DIR=""
 SOURCE_MODE="remote"
 
 # Available skills to install (each has its own scripts/ subdirectory)
-SKILLS="cargo-agent npm-agent py-agent terra-agent"
+SKILLS="ansible-agent bash-agent cargo-agent docker-agent gha-agent go-agent helm-agent kube-agent npm-agent py-agent sql-agent terra-agent"
 SELECTED_SKILLS=""
 
 info() {
@@ -192,6 +192,15 @@ resolve_source_dir() {
   SOURCE_DIR="${TMP_DIR}"
   SOURCE_MODE="remote"
 
+  # Fetch shared library
+  mkdir -p "${SOURCE_DIR}/lib"
+  src_url="${RAW_BASE}/lib/x-agent-common.sh"
+  dest="${SOURCE_DIR}/lib/x-agent-common.sh"
+  info "Fetching lib/x-agent-common.sh..."
+  if ! fetch_to_file "$src_url" "$dest"; then
+    die "Unable to download ${src_url}"
+  fi
+
   # Fetch each selected skill's SKILL.md and scripts
   for skill in $SELECTED_SKILLS; do
     mkdir -p "${SOURCE_DIR}/skills/${skill}/scripts"
@@ -236,6 +245,26 @@ install_skill_to_root() {
   fi
 }
 
+# Install the shared library to a skills root so agent scripts can source it.
+# For local installs, symlink the lib/ directory.
+# For remote installs, copy the fetched lib/ directory.
+install_lib_to_root() {
+  root="$1"
+  target="${root}/lib"
+
+  mkdir -p "$root"
+  rm -rf "$target"
+
+  if [ "$SOURCE_MODE" = "local" ]; then
+    ln -s "${SOURCE_DIR}/lib" "$target"
+    info "Symlinked lib to ${target} -> ${SOURCE_DIR}/lib"
+  else
+    mkdir -p "$target"
+    cp -R "${SOURCE_DIR}/lib/." "$target/"
+    info "Installed lib to ${target}"
+  fi
+}
+
 # Rewrite SKILL.md paths to point at the actual installed script location.
 patch_skill_paths() {
   root="$1"
@@ -259,6 +288,84 @@ patch_skill_paths() {
 check_optional_deps() {
   info "Checking optional dependencies..."
   all_ok=1
+
+  if skill_selected "ansible-agent"; then
+    if command -v ansible-lint >/dev/null 2>&1; then
+      info "  Found: ansible-lint"
+    else
+      warn "  Missing: ansible-lint (needed by ansible-agent)"
+      all_ok=0
+    fi
+
+    if command -v ansible-playbook >/dev/null 2>&1; then
+      info "  Found: ansible-playbook"
+    else
+      warn "  Missing: ansible-playbook (needed by ansible-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "bash-agent"; then
+    if command -v shellcheck >/dev/null 2>&1; then
+      info "  Found: shellcheck"
+    else
+      warn "  Missing: shellcheck (needed by bash-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "docker-agent"; then
+    if command -v hadolint >/dev/null 2>&1; then
+      info "  Found: hadolint"
+    else
+      warn "  Missing: hadolint (needed by docker-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "gha-agent"; then
+    if command -v actionlint >/dev/null 2>&1; then
+      info "  Found: actionlint"
+    else
+      warn "  Missing: actionlint (needed by gha-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "helm-agent"; then
+    if command -v helm >/dev/null 2>&1; then
+      info "  Found: helm"
+    else
+      warn "  Missing: helm (needed by helm-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "kube-agent"; then
+    if command -v kubeconform >/dev/null 2>&1; then
+      info "  Found: kubeconform"
+    elif command -v kubeval >/dev/null 2>&1; then
+      info "  Found: kubeval"
+    else
+      warn "  Missing: kubeconform or kubeval (needed by kube-agent)"
+      all_ok=0
+    fi
+  fi
+
+  if skill_selected "go-agent"; then
+    if command -v go >/dev/null 2>&1; then
+      info "  Found: go"
+    else
+      warn "  Missing: go (needed by go-agent)"
+      all_ok=0
+    fi
+
+    if command -v staticcheck >/dev/null 2>&1; then
+      info "  Found: staticcheck"
+    else
+      warn "  Missing: staticcheck (optional for go-agent staticcheck step)"
+    fi
+  fi
 
   if skill_selected "cargo-agent"; then
     if command -v jq >/dev/null 2>&1; then
@@ -301,6 +408,15 @@ check_optional_deps() {
     done
   fi
 
+  if skill_selected "sql-agent"; then
+    if command -v sqlfluff >/dev/null 2>&1; then
+      info "  Found: sqlfluff"
+    else
+      warn "  Missing: sqlfluff (needed by sql-agent)"
+      all_ok=0
+    fi
+  fi
+
   if skill_selected "terra-agent"; then
     if command -v terraform >/dev/null 2>&1; then
       info "  Found: terraform"
@@ -334,6 +450,27 @@ print_agents_md_snippet() {
 
   for skill in $SELECTED_SKILLS; do
     case "$skill" in
+      ansible-agent)
+        echo "- Ansible: use \`/ansible-agent\` (lint/syntax)."
+        ;;
+      bash-agent)
+        echo "- Bash/Shell: use \`/bash-agent\` (syntax/lint)."
+        ;;
+      docker-agent)
+        echo "- Docker: use \`/docker-agent\` (lint Dockerfiles)."
+        ;;
+      gha-agent)
+        echo "- GitHub Actions: use \`/gha-agent\` (lint)."
+        ;;
+      helm-agent)
+        echo "- Helm: use \`/helm-agent\` (lint/template)."
+        ;;
+      kube-agent)
+        echo "- Kubernetes: use \`/kube-agent\` (validate manifests)."
+        ;;
+      go-agent)
+        echo "- Go: use \`/go-agent\` (fmt/vet/staticcheck/test)."
+        ;;
       cargo-agent)
         echo "- Rust: use \`/cargo-agent\` (fmt/check/clippy/test)."
         ;;
@@ -342,6 +479,9 @@ print_agents_md_snippet() {
         ;;
       py-agent)
         echo "- Python: use \`/py-agent\` (format/lint/typecheck/test)."
+        ;;
+      sql-agent)
+        echo "- SQL: use \`/sql-agent\` (lint/fix)."
         ;;
       terra-agent)
         echo "- Terraform: use \`/terra-agent\` (fmt-check/fmt-fix/init/plan-safe/validate/lint)."
@@ -408,6 +548,7 @@ fi
 
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CLAUDE_SKILLS_DIR}?" yes; then
+    install_lib_to_root "$CLAUDE_SKILLS_DIR"
     for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CLAUDE_SKILLS_DIR" "$skill"
       patch_skill_paths "$CLAUDE_SKILLS_DIR" "$skill"
@@ -419,6 +560,7 @@ fi
 
 if [ "$INSTALL_CODEX" -eq 1 ]; then
   if prompt_yes_no "Install skills to ${CODEX_SKILLS_DIR}?" yes; then
+    install_lib_to_root "$CODEX_SKILLS_DIR"
     for skill in $SELECTED_SKILLS; do
       install_skill_to_root "$CODEX_SKILLS_DIR" "$skill"
       patch_skill_paths "$CODEX_SKILLS_DIR" "$skill"

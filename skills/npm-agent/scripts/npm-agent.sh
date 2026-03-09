@@ -5,53 +5,18 @@ set -euo pipefail
 # deps: bash, mktemp
 # optional: biome, eslint, prettier
 
-KEEP_DIR="${KEEP_DIR:-0}"         # set to 1 to keep temp dir even on success
-# In CI, show full output; locally, limit to 40 lines to keep things tidy.
-if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
-  MAX_LINES="${MAX_LINES:-999999}"
-else
-  MAX_LINES="${MAX_LINES:-40}"
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../../../lib"
+# shellcheck source=../../../lib/x-agent-common.sh
+source "${LIB_DIR}/x-agent-common.sh"
+
 RUN_LINT="${RUN_LINT:-1}"         # set to 0 to skip lint
 RUN_TYPECHECK="${RUN_TYPECHECK:-1}" # set to 0 to skip typecheck
 RUN_FORMAT="${RUN_FORMAT:-1}"     # set to 0 to skip format
 RUN_TESTS="${RUN_TESTS:-1}"       # set to 0 to skip tests
 RUN_BUILD="${RUN_BUILD:-1}"       # set to 0 to skip build
-FAIL_FAST="${FAIL_FAST:-0}"      # set to 1 or use --fail-fast to stop after first failure
-CHANGED_FILES="${CHANGED_FILES:-}"  # space-separated list of changed files; scopes lint/format
 
-TMPDIR_ROOT="${TMPDIR_ROOT:-/tmp}"
-OUTDIR="$(mktemp -d "${TMPDIR_ROOT%/}/npm-agent.XXXXXX")"
-
-cleanup() {
-  local code="$?"
-  if [[ "$KEEP_DIR" == "1" || "$code" != "0" ]]; then
-    echo "Logs kept in: $OUTDIR"
-  else
-    rm -rf "$OUTDIR"
-  fi
-  exit "$code"
-}
-trap cleanup EXIT
-
-hr() { echo "------------------------------------------------------------"; }
-
-# Returns 0 (continue) unless fail-fast is on and a step already failed.
-should_continue() { [[ "$FAIL_FAST" != "1" || "$overall_ok" == "1" ]]; }
-
-STEP_START_SECONDS=0
-
-step() {
-  local name="$1"
-  STEP_START_SECONDS=$SECONDS
-  hr
-  echo "Step: $name"
-}
-
-fmt_elapsed() {
-  local elapsed=$(( SECONDS - STEP_START_SECONDS ))
-  echo "Time: ${elapsed}s"
-}
+setup_outdir "npm-agent"
 
 # Detect which package manager is in use.
 detect_pm() {
@@ -344,6 +309,7 @@ EOF
 
 main() {
   while [[ "${1:-}" == --* ]]; do
+    # shellcheck disable=SC2034 # FAIL_FAST used by should_continue() in x-agent-common.sh
     case "$1" in
       --fail-fast) FAIL_FAST=1; shift ;;
       *) break ;;
@@ -381,9 +347,7 @@ main() {
       ;;
   esac
 
-  hr
-  echo "Overall: $([[ "$overall_ok" == "1" ]] && echo PASS || echo FAIL)"
-  echo "Logs: $OUTDIR"
+  print_overall "$overall_ok"
   [[ "$overall_ok" == "1" ]]
 }
 
