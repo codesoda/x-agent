@@ -274,7 +274,7 @@ run_check() {
   echo "Errors: $errors"
   echo "Warnings: $warnings"
 
-  extract_compiler_diags "$json" 0 2>/dev/null | awk '!seen[$0]++' >"$diags" || true
+  extract_compiler_diags "$json" 1 2>/dev/null | awk '!seen[$0]++' >"$diags" || true
 
   if [[ "$errors" != "0" ]]; then ok=0; fi
 
@@ -315,7 +315,7 @@ run_clippy() {
   echo "Errors: $errors"
   echo "Warnings: $warnings"
 
-  extract_compiler_diags "$json" 0 2>/dev/null | awk '!seen[$0]++' >"$diags" || true
+  extract_compiler_diags "$json" 1 2>/dev/null | awk '!seen[$0]++' >"$diags" || true
   if [[ "$errors" != "0" ]]; then ok=0; fi
 
   if [[ -s "$diags" ]]; then
