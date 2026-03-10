@@ -261,9 +261,9 @@ Logs: /tmp/cargo-agent.abc123
 
 On **PASS**, temp logs are cleaned up automatically. On **FAIL** (or `KEEP_DIR=1`), logs are preserved and the path is printed so the agent can inspect them.
 
-## Claude Code Skills
+## Coding Agent Skills
 
-The `skills/` directory contains Claude Code skill definitions. After installing, agents like Claude Code can invoke these as skills:
+The `skills/` directory contains skill definitions for coding agents (Claude Code, Codex, etc). After installing, agents can invoke these as slash commands:
 
 - `/ansible-agent` — run Ansible playbook checks
 - `/bash-agent` — run shell script checks
